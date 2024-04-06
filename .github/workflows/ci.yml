@@ -27,6 +27,8 @@ jobs:
         with:
           toolchain: ${{matrix.rust}}
       - run: cargo test
+      - run: cargo test --features serde_json5
+      - run: cargo test --no-default-features --features serde_json5
 
   doc:
     name: Documentation
