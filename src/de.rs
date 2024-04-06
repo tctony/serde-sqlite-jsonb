@@ -79,10 +79,47 @@ pub struct Header {
 
 impl<R: Read> Deserializer<R> {
     fn read_header(&mut self) -> Result<Header> {
-        let mut buf = [0; 1];
-        self.reader.read_exact(&mut buf)?;
-        let byte = buf[0];
-        let element_type = match byte & 0x0f {
+        /*  The upper four bits of the first byte of the header determine
+          - size of the header
+          - and possibly also the size of the payload.
+        */
+        let mut header_0 = [0u8; 1];
+        self.reader.read_exact(&mut header_0)?;
+        let first_byte = header_0[0];
+        let upper_four_bits = first_byte >> 4;
+        /*
+         If the upper four bits have a value between 0 and 11,
+        then the header is exactly one byte in size and the payload size is determined by those upper four bits.
+
+        If the upper four bits have a value between 12 and 15,
+        that means that the total header size is 2, 3, 5, or 9 bytes and the payload size is unsigned big-endian integer that is contained in the subsequent bytes.
+
+        The size integer is
+          - the one byte that following the initial header byte if the upper four bits are 12,
+          - two bytes if the upper bits are 13,
+          - four bytes if the upper bits are 14,
+          - and eight bytes if the upper bits are 15.
+        */
+        let bytes_to_read = match upper_four_bits {
+            0..=11 => 0,
+            12 => 1,
+            13 => 2,
+            14 => 4,
+            15 => 8,
+            n => unreachable!("{n} does not fit in four bits"),
+        };
+        let payload_size: usize = if bytes_to_read == 0 {
+            u64::from(upper_four_bits)
+        } else {
+            let mut buf = [0u8; 8];
+            let start = 8 - bytes_to_read;
+            self.reader.read_exact(&mut buf[start..8])?;
+            u64::from_be_bytes(buf)
+        }
+        .try_into()
+        .map_err(usize_conversion)?;
+        let lower_four_bits = first_byte & 0x0F;
+        let element_type = match lower_four_bits {
             0 => ElementType::Null,
             1 => ElementType::True,
             2 => ElementType::False,
@@ -96,9 +133,11 @@ impl<R: Read> Deserializer<R> {
             10 => ElementType::TextRaw,
             11 => ElementType::Array,
             12 => ElementType::Object,
-            n => return Err(Error::InvalidElementType(n)),
+            13 => ElementType::Reserved13,
+            14 => ElementType::Reserved14,
+            15 => ElementType::Reserved15,
+            n => unreachable!("{n} does not fit in four bits"),
         };
-        let payload_size = (byte >> 4) as usize;
         Ok(Header {
             element_type,
             payload_size,
@@ -140,15 +179,22 @@ impl<R: Read> Deserializer<R> {
         }
     }
 
-    fn read_json_compatible<T>(self, header: Header) -> Result<T> where for<'a> T: Deserialize<'a> {
-        let limit = u64::try_from(header.payload_size).map_err(|_| Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, "payload size too large")))?;
-        let mut reader = self.reader.take(limit);
+    fn read_json_compatible<T>(&mut self, header: Header) -> Result<T>
+    where
+        for<'a> T: Deserialize<'a>,
+    {
+        let limit =
+            u64::try_from(header.payload_size).map_err(usize_conversion)?;
+        let mut reader = (&mut self.reader).take(limit);
         crate::json::parse_json(&mut reader)
     }
 
-    fn read_integer<T>(self, header: Header) -> Result<T> where for<'a> T: Deserialize<'a> {
+    fn read_integer<T>(&mut self, header: Header) -> Result<T>
+    where
+        for<'a> T: Deserialize<'a>,
+    {
         match header.element_type {
-            ElementType::Int => {},
+            ElementType::Int => {}
             ElementType::Int5 => crate::json::assert_json5_supported()?,
             t => return Err(Error::UnexpectedType(t)),
         };
@@ -156,13 +202,14 @@ impl<R: Read> Deserializer<R> {
     }
 }
 
+fn usize_conversion(e: std::num::TryFromIntError) -> Error {
+    Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+}
+
 impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
     type Error = Error;
 
-    fn deserialize_any<V>(
-        self,
-        visitor: V,
-    ) -> Result<V::Value>
+    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
@@ -171,19 +218,16 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
             ElementType::Null => {
                 self.read_null(header)?;
                 visitor.visit_unit()
-            },
+            }
             ElementType::True | ElementType::False => {
                 let b = self.read_bool(header)?;
                 visitor.visit_bool(b)
-            },
+            }
             e => todo!("deserialize any for {:?}", e),
         }
     }
 
-    fn deserialize_bool<V>(
-        self,
-        visitor: V,
-    ) -> Result<V::Value>
+    fn deserialize_bool<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
@@ -191,156 +235,68 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
         visitor.visit_bool(self.read_bool(header)?)
     }
 
-    fn deserialize_i8<V>(
-        self,
-        visitor: V,
-    ) -> Result<V::Value>
+    fn deserialize_i8<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
         let header = self.read_header()?;
-        let i = self.read_integer(header);
-        visitor.visit_i8(i?)
+        visitor.visit_i8(self.read_integer(header)?)
     }
 
-    fn deserialize_i16<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    fn deserialize_i16<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
+        let header = self.read_header()?;
+        visitor.visit_i16(self.read_integer(header)?)
     }
 
-    fn deserialize_i32<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    fn deserialize_i32<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
+        let header = self.read_header()?;
+        visitor.visit_i32(self.read_integer(header)?)
     }
 
-    fn deserialize_i64<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    fn deserialize_i64<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
+        let header = self.read_header()?;
+        visitor.visit_i64(self.read_integer(header)?)
     }
 
-    fn deserialize_u8<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    fn deserialize_u8<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
+        let header = self.read_header()?;
+        visitor.visit_u8(self.read_integer(header)?)
     }
 
-    fn deserialize_u16<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    fn deserialize_u16<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
+        let header = self.read_header()?;
+        visitor.visit_u16(self.read_integer(header)?)
     }
 
-    fn deserialize_u32<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    fn deserialize_u32<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
+        let header = self.read_header()?;
+        visitor.visit_u32(self.read_integer(header)?)
     }
 
-    fn deserialize_u64<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    fn deserialize_u64<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
-    }
-
-    fn deserialize_f32<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
-    where
-        V: Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_f64<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
-    where
-        V: Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_char<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
-    where
-        V: Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_str<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
-    where
-        V: Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_string<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
-    where
-        V: Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_bytes<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
-    where
-        V: Visitor<'de>,
-    {
-        todo!()
-    }
-
-    fn deserialize_byte_buf<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
-    where
-        V: Visitor<'de>,
-    {
-        todo!()
+        let header = self.read_header()?;
+        visitor.visit_u64(self.read_integer(header)?)
     }
 
     fn deserialize_option<V>(
@@ -471,14 +427,158 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
     {
         todo!()
     }
+
+    fn deserialize_f32<V>(
+        self,
+        visitor: V,
+    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        todo!()
+    }
+
+    fn deserialize_f64<V>(
+        self,
+        visitor: V,
+    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        todo!()
+    }
+
+    fn deserialize_char<V>(
+        self,
+        visitor: V,
+    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        todo!()
+    }
+
+    fn deserialize_str<V>(
+        self,
+        visitor: V,
+    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        todo!()
+    }
+
+    fn deserialize_string<V>(
+        self,
+        visitor: V,
+    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        todo!()
+    }
+
+    fn deserialize_bytes<V>(
+        self,
+        visitor: V,
+    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        todo!()
+    }
+
+    fn deserialize_byte_buf<V>(
+        self,
+        visitor: V,
+    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        todo!()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn assert_header(bytes: &[u8], expected: Header) {
+        let mut de = Deserializer::from_bytes(bytes);
+        let header = de.read_header().unwrap();
+        assert_eq!(header, expected);
+    }
+
+    #[test]
+    fn test_read_header() {
+        assert_header(
+            &[0b_0000_0000],
+            Header {
+                element_type: ElementType::Null,
+                payload_size: 0,
+            },
+        );
+        assert_header(
+            &[0b_0000_0001],
+            Header {
+                element_type: ElementType::True,
+                payload_size: 0,
+            },
+        );
+        assert_header(
+            &[0b_0000_0010],
+            Header {
+                element_type: ElementType::False,
+                payload_size: 0,
+            },
+        );
+        assert_header(
+            &[0b_1100_0011, 0xFA],
+            Header {
+                element_type: ElementType::Int,
+                payload_size: 0xFA,
+            },
+        );
+        assert_header(
+            b"\xf3\x00\x00\x00\x00\x00\x00\x00\x01",
+            Header {
+                element_type: ElementType::Int,
+                payload_size: 1,
+            },
+        );
+    }
+
+    fn assert_all_int_types_eq(encoded: &[u8], expected: i64) {
+        // unsigned
+        assert_eq!(
+            from_bytes::<i8>(encoded).unwrap(),
+            expected as i8,
+            "parsing {encoded:?} as i8"
+        );
+        assert_eq!(from_bytes::<i16>(encoded).unwrap(), expected as i16);
+        assert_eq!(from_bytes::<i32>(encoded).unwrap(), expected as i32);
+        assert_eq!(from_bytes::<i64>(encoded).unwrap(), expected);
+        // signed
+        assert_eq!(from_bytes::<u8>(encoded).unwrap(), expected as u8);
+        assert_eq!(from_bytes::<u16>(encoded).unwrap(), expected as u16);
+        assert_eq!(from_bytes::<u32>(encoded).unwrap(), expected as u32);
+        assert_eq!(from_bytes::<u64>(encoded).unwrap(), expected as u64);
+    }
+
     #[test]
     fn test_decoding_1() {
-        assert_eq!(from_bytes::<u8>(b"\x13\x31").unwrap(), 1);
+        /* From the spec:
+        The header for an element does not need to be in its simplest form. For example, consider the JSON numeric value "1". That element can be encode in five different ways:
+           0x13 0x31
+           0xc3 0x01 0x31
+           0xd3 0x00 0x01 0x31
+           0xe3 0x00 0x00 0x00 0x01 0x31
+           0xf3 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x01 0x31
+        */
+        assert_all_int_types_eq(b"\x13\x31", 1);
+        assert_all_int_types_eq(b"\xc3\x01\x31", 1);
+        assert_all_int_types_eq(b"\xd3\x00\x01\x31", 1);
+        assert_all_int_types_eq(b"\xe3\x00\x00\x00\x01\x31", 1);
+        assert_all_int_types_eq(b"\xf3\x00\x00\x00\x00\x00\x00\x00\x01\x31", 1);
     }
 }
