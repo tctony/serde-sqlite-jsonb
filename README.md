@@ -19,3 +19,7 @@ serde-sqlite-jsonb = { version = "0.1", features = ["serde-json5"], default-feat
 
 The format of the JSONB column is described in the SQLite documentation:
 https://sqlite.org/draft/jsonb.html
+
+## MSRV
+
+Requires rust >= 1.63 (debian stable)

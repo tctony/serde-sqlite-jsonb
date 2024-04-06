@@ -559,7 +559,9 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
         let header = self.read_header()?;
         let s = self.read_string(header)?;
         if s.len() != 1 {
-            return Err(Error::Message("invalid string length for char".into()));
+            return Err(Error::Message(
+                "invalid string length for char".into(),
+            ));
         }
         visitor.visit_char(s.chars().next().unwrap())
     }
