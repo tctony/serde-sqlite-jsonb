@@ -7,14 +7,8 @@
 // except according to those terms.
 
 use crate::error::{Error, Result};
-use serde::de::{
-    self, Deserialize, DeserializeSeed, EnumAccess, IntoDeserializer,
-    MapAccess, SeqAccess, VariantAccess, Visitor,
-};
-use std::{
-    io::Read,
-    ops::{AddAssign, MulAssign, Neg},
-};
+use serde::de::{self, Deserialize, Visitor};
+use std::io::Read;
 
 pub struct Deserializer<R: Read> {
     // This string starts with the input data and characters are truncated off
@@ -204,7 +198,7 @@ impl<R: Read> Deserializer<R> {
         match header.element_type {
             ElementType::Int => self.read_json_compatible(header),
             ElementType::Int5 => self.read_json5_compatible(header),
-            t => return Err(Error::UnexpectedType(t)),
+            t => Err(Error::UnexpectedType(t)),
         }
     }
 }
@@ -306,20 +300,14 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
         visitor.visit_u64(self.read_integer(header)?)
     }
 
-    fn deserialize_option<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    fn deserialize_option<V>(self, _visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
         todo!()
     }
 
-    fn deserialize_unit<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    fn deserialize_unit<V>(self, _visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
@@ -328,9 +316,9 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
 
     fn deserialize_unit_struct<V>(
         self,
-        name: &'static str,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+        _name: &'static str,
+        _visitor: V,
+    ) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
@@ -339,30 +327,23 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
 
     fn deserialize_newtype_struct<V>(
         self,
-        name: &'static str,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+        _name: &'static str,
+        _visitor: V,
+    ) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
         todo!()
     }
 
-    fn deserialize_seq<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    fn deserialize_seq<V>(self, _visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
         todo!()
     }
 
-    fn deserialize_tuple<V>(
-        self,
-        len: usize,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    fn deserialize_tuple<V>(self, _len: usize, _visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
@@ -371,20 +352,17 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
 
     fn deserialize_tuple_struct<V>(
         self,
-        name: &'static str,
-        len: usize,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+        _name: &'static str,
+        _len: usize,
+        _visitor: V,
+    ) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
         todo!()
     }
 
-    fn deserialize_map<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    fn deserialize_map<V>(self, _visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
@@ -393,10 +371,10 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
 
     fn deserialize_struct<V>(
         self,
-        name: &'static str,
-        fields: &'static [&'static str],
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+        _name: &'static str,
+        _fields: &'static [&'static str],
+        _visitor: V,
+    ) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
@@ -405,100 +383,73 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
 
     fn deserialize_enum<V>(
         self,
-        name: &'static str,
-        variants: &'static [&'static str],
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+        _name: &'static str,
+        _variants: &'static [&'static str],
+        _visitor: V,
+    ) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
         todo!()
     }
 
-    fn deserialize_identifier<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    fn deserialize_identifier<V>(self, _visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
         todo!()
     }
 
-    fn deserialize_ignored_any<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    fn deserialize_ignored_any<V>(self, _visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
         todo!()
     }
 
-    fn deserialize_f32<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    fn deserialize_f32<V>(self, _visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
         todo!()
     }
 
-    fn deserialize_f64<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    fn deserialize_f64<V>(self, _visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
         todo!()
     }
 
-    fn deserialize_char<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    fn deserialize_char<V>(self, _visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
         todo!()
     }
 
-    fn deserialize_str<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    fn deserialize_str<V>(self, _visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
         todo!()
     }
 
-    fn deserialize_string<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    fn deserialize_string<V>(self, _visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
         todo!()
     }
 
-    fn deserialize_bytes<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    fn deserialize_bytes<V>(self, _visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
         todo!()
     }
 
-    fn deserialize_byte_buf<V>(
-        self,
-        visitor: V,
-    ) -> std::prelude::v1::Result<V::Value, Self::Error>
+    fn deserialize_byte_buf<V>(self, _visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
