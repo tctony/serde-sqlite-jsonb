@@ -184,7 +184,17 @@ impl<R: Read> Deserializer<R> {
         let limit =
             u64::try_from(header.payload_size).map_err(usize_conversion)?;
         let mut reader = (&mut self.reader).take(limit);
-        crate::json::parse_json(&mut reader)
+        Ok(crate::json::parse_json(&mut reader)?)
+    }
+
+    fn read_json5_compatible<T>(&mut self, header: Header) -> Result<T>
+    where
+        for<'a> T: Deserialize<'a>,
+    {
+        let limit =
+            u64::try_from(header.payload_size).map_err(usize_conversion)?;
+        let mut reader = (&mut self.reader).take(limit);
+        Ok(crate::json::parse_json5(&mut reader)?)
     }
 
     fn read_integer<T>(&mut self, header: Header) -> Result<T>
@@ -192,11 +202,10 @@ impl<R: Read> Deserializer<R> {
         for<'a> T: Deserialize<'a>,
     {
         match header.element_type {
-            ElementType::Int => {}
-            ElementType::Int5 => crate::json::assert_json5_supported()?,
+            ElementType::Int => self.read_json_compatible(header),
+            ElementType::Int5 => self.read_json5_compatible(header),
             t => return Err(Error::UnexpectedType(t)),
-        };
-        self.read_json_compatible(header)
+        }
     }
 }
 
