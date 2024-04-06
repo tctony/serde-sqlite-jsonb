@@ -1,11 +1,3 @@
-// Copyright 2018 Serde Developers
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use serde::{de, ser};
 use std::fmt::{self, Display};
 
@@ -23,6 +15,7 @@ pub enum Error {
     UnexpectedType(ElementType),
     Io(std::io::Error),
     TrailingCharacters,
+    Utf8(std::string::FromUtf8Error),
 }
 
 impl ser::Error for Error {
@@ -41,16 +34,17 @@ impl Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Error::Message(m) => write!(f, "{}", m),
-            Error::JsonError(e) => write!(f, "json error: {}", e),
-            Error::Json5Error(e) => write!(f, "json5 error: {}", e),
+            Error::JsonError(_) => write!(f, "json error"),
+            Error::Json5Error(_) => write!(f, "json5 error"),
             Error::InvalidElementType(t) => {
                 write!(f, "{t} is not a valid jsonb element type code")
             }
             Error::UnexpectedType(t) => write!(f, "unexpected type: {t:?}"),
-            Error::Io(e) => write!(f, "io error: {}", e),
+            Error::Io(_) => write!(f, "io error"),
             Error::TrailingCharacters => {
                 write!(f, "trailing data after the end of the jsonb value")
             }
+            Error::Utf8(_) => write!(f, "invalid utf8 in string"),
         }
     }
 }
@@ -61,6 +55,7 @@ impl std::error::Error for Error {
             Error::JsonError(e) => Some(e),
             Error::Json5Error(e) => Some(e),
             Error::Io(e) => Some(e),
+            Error::Utf8(e) => Some(e),
             _ => None,
         }
     }
@@ -72,6 +67,12 @@ impl From<std::io::Error> for Error {
     }
 }
 
+impl From<std::string::FromUtf8Error> for Error {
+    fn from(err: std::string::FromUtf8Error) -> Self {
+        Error::Utf8(err)
+    }
+}
+
 #[cfg(feature = "serde_json")]
 impl From<crate::json::JsonError> for Error {
     fn from(err: crate::json::JsonError) -> Error {
@@ -79,7 +80,6 @@ impl From<crate::json::JsonError> for Error {
     }
 }
 
-#[cfg(feature = "serde_json5")]
 impl From<crate::json::Json5Error> for Error {
     fn from(err: crate::json::Json5Error) -> Error {
         Error::Json5Error(err)

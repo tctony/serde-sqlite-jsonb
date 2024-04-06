@@ -46,22 +46,39 @@ where
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Represents the different element types in the JSONB format.
 pub enum ElementType {
+    /// The element is a JSON "null".
     Null,
+    /// The element is a JSON "true".
     True,
+    /// The element is a JSON "false".
     False,
+    /// The element is a JSON integer value in the canonical RFC 8259 format.
     Int,
+    /// The element is a JSON integer value that is not in the canonical format.
     Int5,
+    /// The element is a JSON floating-point value in the canonical RFC 8259 format.
     Float,
+    /// The element is a JSON floating-point value that is not in the canonical format.
     Float5,
+    /// The element is a JSON string value that does not contain any escapes.
     Text,
+    /// The element is a JSON string value that contains RFC 8259 character escapes.
     TextJ,
+    /// The element is a JSON string value that contains character escapes, including some from JSON5.
     Text5,
+    /// The element is a JSON string value that contains UTF8 characters that need to be escaped.
     TextRaw,
+    /// The element is a JSON array.
     Array,
+    /// The element is a JSON object.
     Object,
+    /// Reserved for future expansion.
     Reserved13,
+    /// Reserved for future expansion.
     Reserved14,
+    /// Reserved for future expansion.
     Reserved15,
 }
 
@@ -136,11 +153,10 @@ impl<R: Read> Deserializer<R> {
         })
     }
 
-    fn read_header_with_payload(&mut self) -> Result<(ElementType, Vec<u8>)> {
-        let header = self.read_header()?;
+    fn read_payload(&mut self, header: Header) -> Result<Vec<u8>> {
         let mut buf = vec![0; header.payload_size];
         self.reader.read_exact(&mut buf)?;
-        Ok((header.element_type, buf))
+        Ok(buf)
     }
 
     fn drop_payload(&mut self, header: Header) -> Result<ElementType> {
@@ -200,6 +216,16 @@ impl<R: Read> Deserializer<R> {
         match header.element_type {
             ElementType::Int => self.read_json_compatible(header),
             ElementType::Int5 => self.read_json5_compatible(header),
+            t => Err(Error::UnexpectedType(t)),
+        }
+    }
+
+    fn read_string(&mut self, header: Header) -> Result<String> {
+        let body = self.read_payload(header)?;
+        match header.element_type {
+            ElementType::Text => Ok(String::from_utf8(body)?),
+            ElementType::TextJ => todo!("json str"),
+            ElementType::Text5 => todo!("json5 str"),
             t => Err(Error::UnexpectedType(t)),
         }
     }
@@ -442,14 +468,15 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
     where
         V: Visitor<'de>,
     {
-        todo!()
+        todo!("Borrowed string deserialization is not supported")
     }
 
-    fn deserialize_string<V>(self, _visitor: V) -> Result<V::Value>
+    fn deserialize_string<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
+        let header = self.read_header()?;
+        visitor.visit_string(self.read_string(header)?)
     }
 
     fn deserialize_bytes<V>(self, _visitor: V) -> Result<V::Value>
@@ -568,5 +595,10 @@ mod tests {
     fn test_null() {
         from_bytes::<()>(b"\x00").unwrap();
         assert_eq!(from_bytes::<Option<u64>>(b"\x00").unwrap(), None);
+    }
+
+    #[test]
+    fn test_string() {
+        assert_eq!(from_bytes::<String>(b"\x57hello").unwrap(), "hello");
     }
 }

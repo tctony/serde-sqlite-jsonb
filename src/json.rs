@@ -12,8 +12,8 @@ pub(crate) type JsonError = serde_json5::Error;
 pub(crate) use serde_json5::from_reader as parse_json5;
 
 #[cfg(not(feature = "serde_json5"))]
-pub(crate) fn parse_json5<I, T>(_input: I) -> crate::Result<T> {
-    Err(crate::Error::Json5Error(Json5Error))
+pub(crate) fn parse_json5<I, T>(_input: I) -> Result<T, Json5Error> {
+    Err(Json5Error)
 }
 
 #[cfg(feature = "serde_json5")]
