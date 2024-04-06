@@ -109,15 +109,13 @@ impl<R: Read> Deserializer<R> {
             n => unreachable!("{n} does not fit in four bits"),
         };
         let payload_size: usize = if bytes_to_read == 0 {
-            u64::from(upper_four_bits)
+            usize::from(upper_four_bits)
         } else {
             let mut buf = [0u8; 8];
             let start = 8 - bytes_to_read;
             self.reader.read_exact(&mut buf[start..8])?;
-            u64::from_be_bytes(buf)
-        }
-        .try_into()
-        .map_err(usize_conversion)?;
+            usize::from_be_bytes(buf)
+        };
         let lower_four_bits = first_byte & 0x0F;
         let element_type = match lower_four_bits {
             0 => ElementType::Null,
