@@ -578,5 +578,11 @@ mod tests {
         assert_all_int_types_eq(b"\xd3\x00\x01\x31", 1);
         assert_all_int_types_eq(b"\xe3\x00\x00\x00\x01\x31", 1);
         assert_all_int_types_eq(b"\xf3\x00\x00\x00\x00\x00\x00\x00\x01\x31", 1);
+        assert_all_int_types_eq(b"\xc3\x03127", 127);
+    }
+
+    #[test]
+    fn test_decoding_large_int() {
+        assert_eq!(from_bytes::<u64>(b"\xc3\xf418446744073709551615").unwrap(), 18446744073709551615);
     }
 }
