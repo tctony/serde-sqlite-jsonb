@@ -516,11 +516,13 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
         todo!()
     }
 
-    fn deserialize_ignored_any<V>(self, _visitor: V) -> Result<V::Value>
+    fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
+        let header = self.read_header()?;
+        self.drop_payload(header)?;
+        visitor.visit_unit()
     }
 
     fn deserialize_f32<V>(self, _visitor: V) -> Result<V::Value>
