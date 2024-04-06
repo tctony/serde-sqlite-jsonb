@@ -171,13 +171,17 @@ impl<R: Read> Deserializer<R> {
         }
     }
 
+    fn reader_with_limit(&mut self, header: Header) -> Result<impl Read + '_> {
+        let limit =
+            u64::try_from(header.payload_size).map_err(usize_conversion)?;
+        Ok((&mut self.reader).take(limit))
+    }
+
     fn read_json_compatible<T>(&mut self, header: Header) -> Result<T>
     where
         for<'a> T: Deserialize<'a>,
     {
-        let limit =
-            u64::try_from(header.payload_size).map_err(usize_conversion)?;
-        let mut reader = (&mut self.reader).take(limit);
+        let mut reader = self.reader_with_limit(header)?;
         Ok(crate::json::parse_json(&mut reader)?)
     }
 
@@ -185,9 +189,7 @@ impl<R: Read> Deserializer<R> {
     where
         for<'a> T: Deserialize<'a>,
     {
-        let limit =
-            u64::try_from(header.payload_size).map_err(usize_conversion)?;
-        let mut reader = (&mut self.reader).take(limit);
+        let mut reader = self.reader_with_limit(header)?;
         Ok(crate::json::parse_json5(&mut reader)?)
     }
 
