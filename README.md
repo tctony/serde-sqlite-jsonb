@@ -1,21 +1,21 @@
-Please refer to the Serde website under [**Writing a data format**] for a
-discussion of this example code.
+# serde-sqlite-jsonb
 
-[**Writing a data format**]: https://serde.rs/data-format.html
+This crate provides a custom Serde deserializer for SQLite JSONB columns.
 
-<br>
+## Crate features
 
-#### License
+The binary format can contain raw json data, so this crate depends on the `serde_json` crate to parse the JSON data.
+Since SQLite also supports json5, the `serde-json5` feature can be used if json5 support is needed.
 
-<sup>
-Licensed under either of <a href="LICENSE-APACHE">Apache License, Version
-2.0</a> or <a href="LICENSE-MIT">MIT license</a> at your option.
-</sup>
+By default, the (faster) `serde_json` feature is enabled and this crate returns an error when trying to parse json5 data.
+To enable json5 support, disable the default features and enable the `serde-json5` feature:
 
-<br>
+```toml
+[dependencies]
+serde-sqlite-jsonb = { version = "0.1", features = ["serde-json5"], default-features = false }
+```
 
-<sub>
-Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in this crate by you, as defined in the Apache-2.0 license, shall
-be dual licensed as above, without any additional terms or conditions.
-</sub>
+## Format
+
+The format of the JSONB column is described in the SQLite documentation:
+https://sqlite.org/draft/jsonb.html

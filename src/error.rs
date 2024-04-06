@@ -9,38 +9,19 @@
 use serde::{de, ser};
 use std::fmt::{self, Display};
 
+use crate::de::ElementType;
+
 pub type Result<T> = std::result::Result<T, Error>;
 
-// This is a bare-bones implementation. A real library would provide additional
-// information in its error type, for example the line and column at which the
-// error occurred, the byte offset into the input, or the current key being
-// processed.
+/// An error that can be produced during parsing.
 #[derive(Debug)]
 pub enum Error {
-    // One or more variants that can be created by data structures through the
-    // `ser::Error` and `de::Error` traits. For example the Serialize impl for
-    // Mutex<T> might return an error because the mutex is poisoned, or the
-    // Deserialize impl for a struct may return an error because a required
-    // field is missing.
     Message(String),
-
-    // Zero or more variants that can be created directly by the Serializer and
-    // Deserializer without going through `ser::Error` and `de::Error`. These
-    // are specific to the format, in this case JSON.
-    Eof,
-    Syntax,
-    ExpectedBoolean,
-    ExpectedInteger,
-    ExpectedString,
-    ExpectedNull,
-    ExpectedArray,
-    ExpectedArrayComma,
-    ExpectedArrayEnd,
-    ExpectedMap,
-    ExpectedMapColon,
-    ExpectedMapComma,
-    ExpectedMapEnd,
-    ExpectedEnum,
+    NeedsJson5,
+    JsonError(crate::json::Error),
+    InvalidElementType(u8),
+    UnexpectedType(ElementType),
+    Io(std::io::Error),
     TrailingCharacters,
 }
 
@@ -59,12 +40,35 @@ impl de::Error for Error {
 impl Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Error::Message(msg) => write!(f, "{}", msg),
-            Error::Eof => f.write_str("unexpected end of input"),
-            /* and so forth */
-            _ => unimplemented!(),
+            Error::Message(m) => write!(f, "{}", m ),
+            Error::NeedsJson5 => write!(f, "Json5 data was encountered, but json5 support is not enabled. Enable the `serde_json5` feature of the serde-sqlite-jsonb crate to enable support for json5 data."),
+            Error::JsonError(e) => write!(f, "json error: {}", e),
+            Error::InvalidElementType(t) => write!(f, "{t} is not a valid jsonb element type code"),
+            Error::UnexpectedType(t) => write!(f, "unexpected type: {t:?}"),
+            Error::Io(e) => write!(f, "io error: {}", e),
+            Error::TrailingCharacters => write!(f, "trailing data after the end of the jsonb value"),
         }
     }
 }
 
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::JsonError(e) => Some(e),
+            Error::Io(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Error {
+        Error::Io(err)
+    }
+}
+
+impl From<crate::json::Error> for Error {
+    fn from(err: crate::json::Error) -> Error {
+        Error::JsonError(err)
+    }
+}
