@@ -302,11 +302,17 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
         visitor.visit_u64(self.read_integer(header)?)
     }
 
-    fn deserialize_option<V>(self, _visitor: V) -> Result<V::Value>
+    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
+        let header = self.read_header()?;
+        if header.element_type == ElementType::Null {
+            self.read_null(header)?;
+            visitor.visit_none()
+        } else {
+            visitor.visit_some(self)
+        }
     }
 
     fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value>
@@ -561,5 +567,6 @@ mod tests {
     #[test]
     fn test_null() {
         from_bytes::<()>(b"\x00").unwrap();
+        assert_eq!(from_bytes::<Option<u64>>(b"\x00").unwrap(), None);
     }
 }
