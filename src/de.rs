@@ -246,6 +246,17 @@ impl<R: Read> Deserializer<R> {
             t => Err(Error::UnexpectedType(t)),
         }
     }
+
+    fn read_float<T>(&mut self, header: Header) -> Result<T>
+    where
+        for<'a> T: Deserialize<'a>,
+    {
+        match header.element_type {
+            ElementType::Float => self.read_json_compatible(header),
+            ElementType::Float5 => self.read_json5_compatible(header),
+            t => Err(Error::UnexpectedType(t)),
+        }
+    }
 }
 
 /// A reader wrapped that adds double quotes around the original text
@@ -525,32 +536,40 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
         visitor.visit_unit()
     }
 
-    fn deserialize_f32<V>(self, _visitor: V) -> Result<V::Value>
+    fn deserialize_f32<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
+        let header = self.read_header()?;
+        visitor.visit_f32(self.read_float(header)?)
     }
 
-    fn deserialize_f64<V>(self, _visitor: V) -> Result<V::Value>
+    fn deserialize_f64<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
+        let header = self.read_header()?;
+        visitor.visit_f64(self.read_float(header)?)
     }
 
-    fn deserialize_char<V>(self, _visitor: V) -> Result<V::Value>
+    fn deserialize_char<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
+        let header = self.read_header()?;
+        let s = self.read_string(header)?;
+        if s.len() != 1 {
+            return Err(Error::Message("invalid string length for char".into()));
+        }
+        visitor.visit_char(s.chars().next().unwrap())
     }
 
-    fn deserialize_str<V>(self, _visitor: V) -> Result<V::Value>
+    fn deserialize_str<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!("Borrowed string deserialization is not supported")
+        // Borrowed string deserialization is not supported
+        self.deserialize_string(visitor)
     }
 
     fn deserialize_string<V>(self, visitor: V) -> Result<V::Value>
