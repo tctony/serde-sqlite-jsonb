@@ -17,8 +17,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug)]
 pub enum Error {
     Message(String),
-    NeedsJson5,
-    JsonError(crate::json::Error),
+    JsonError(crate::json::JsonError),
+    Json5Error(crate::json::Json5Error),
     InvalidElementType(u8),
     UnexpectedType(ElementType),
     Io(std::io::Error),
@@ -40,13 +40,17 @@ impl de::Error for Error {
 impl Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Error::Message(m) => write!(f, "{}", m ),
-            Error::NeedsJson5 => write!(f, "Json5 data was encountered, but json5 support is not enabled. Enable the `serde_json5` feature of the serde-sqlite-jsonb crate to enable support for json5 data."),
+            Error::Message(m) => write!(f, "{}", m),
             Error::JsonError(e) => write!(f, "json error: {}", e),
-            Error::InvalidElementType(t) => write!(f, "{t} is not a valid jsonb element type code"),
+            Error::Json5Error(e) => write!(f, "json5 error: {}", e),
+            Error::InvalidElementType(t) => {
+                write!(f, "{t} is not a valid jsonb element type code")
+            }
             Error::UnexpectedType(t) => write!(f, "unexpected type: {t:?}"),
             Error::Io(e) => write!(f, "io error: {}", e),
-            Error::TrailingCharacters => write!(f, "trailing data after the end of the jsonb value"),
+            Error::TrailingCharacters => {
+                write!(f, "trailing data after the end of the jsonb value")
+            }
         }
     }
 }
@@ -54,6 +58,7 @@ impl Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Error::JsonError(e) => Some(e),
             Error::JsonError(e) => Some(e),
             Error::Io(e) => Some(e),
             _ => None,
@@ -67,8 +72,16 @@ impl From<std::io::Error> for Error {
     }
 }
 
-impl From<crate::json::Error> for Error {
-    fn from(err: crate::json::Error) -> Error {
+#[cfg(feature = "serde_json")]
+impl From<crate::json::JsonError> for Error {
+    fn from(err: crate::json::JsonError) -> Error {
         Error::JsonError(err)
+    }
+}
+
+#[cfg(feature = "serde_json5")]
+impl From<crate::json::Json5Error> for Error {
+    fn from(err: crate::json::Json5Error) -> Error {
+        Error::Json5Error(err)
     }
 }

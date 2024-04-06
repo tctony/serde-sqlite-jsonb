@@ -1,18 +1,22 @@
-#[cfg(feature = "serde_json5")]
-type Error = serde_json5::Error;
-#[cfg(not(feature = "serde_json5"))]
-pub(crate) type Error = serde_json::Error;
-
 #[cfg(feature = "serde_json")]
 pub(crate) use serde_json::from_reader as parse_json;
+#[cfg(feature = "serde_json")]
+pub(crate) type JsonError = serde_json::Error;
 
 #[cfg(not(feature = "serde_json"))]
 pub(crate) use serde_json5::from_reader as parse_json;
+#[cfg(not(feature = "serde_json"))]
+pub(crate) type JsonError = serde_json5::Error;
 
 #[cfg(feature = "serde_json5")]
 pub(crate) use serde_json5::from_reader as parse_json5;
 
 #[cfg(not(feature = "serde_json5"))]
 pub(crate) fn parse_json5<I, T>(_input: I) -> crate::Result<T> {
-    Err(crate::Error::NeedsJson5)
+    Err(crate::Error::Json5Error("Json5 data was encountered, but json5 support is not enabled. Enable the `serde_json5` feature of the serde-sqlite-jsonb crate to enable support for json5 data."))
 }
+
+#[cfg(feature = "serde_json5")]
+pub(crate) type Json5Error = serde_json5::Error;
+#[cfg(not(feature = "serde_json5"))]
+pub(crate) type Json5Error = &'static str;
