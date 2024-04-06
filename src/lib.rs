@@ -8,8 +8,8 @@
 
 mod de;
 mod error;
-mod ser;
 mod json;
+mod ser;
 
 pub use crate::de::{from_bytes, Deserializer};
 pub use crate::error::{Error, Result};

@@ -3,9 +3,11 @@ type Error = serde_json5::Error;
 #[cfg(not(feature = "serde_json5"))]
 pub(crate) type Error = serde_json::Error;
 
-pub(crate) fn parse_json<R: std::io::Read, T>(reader: &mut R) -> crate::Result<T> 
+pub(crate) fn parse_json<R: std::io::Read, T>(
+    reader: &mut R,
+) -> crate::Result<T>
 where
-    for <'de> T: serde::de::Deserialize<'de>,
+    for<'de> T: serde::de::Deserialize<'de>,
 {
     #[cfg(not(feature = "serde_json5"))]
     use serde_json::from_reader;

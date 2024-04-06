@@ -583,6 +583,14 @@ mod tests {
 
     #[test]
     fn test_decoding_large_int() {
-        assert_eq!(from_bytes::<u64>(b"\xc3\xf418446744073709551615").unwrap(), 18446744073709551615);
+        assert_eq!(
+            from_bytes::<u64>(b"\xc3\xf418446744073709551615").unwrap(),
+            18446744073709551615
+        );
+        // large negative i64
+        assert_eq!(
+            from_bytes::<i64>(b"\xc3\xf5-9223372036854775808").unwrap(),
+            -9223372036854775808
+        );
     }
 }
