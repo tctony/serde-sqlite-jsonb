@@ -209,6 +209,14 @@ impl<R: Read> Deserializer<R> {
         Ok(crate::json::parse_json5(&mut reader)?)
     }
 
+    fn read_json_compatible_string(
+        &mut self,
+        header: Header,
+    ) -> Result<String> {
+        let mut reader = ReadWithQuotes::new(self.reader_with_limit(header)?);
+        Ok(crate::json::parse_json(&mut reader)?)
+    }
+
     fn read_integer<T>(&mut self, header: Header) -> Result<T>
     where
         for<'a> T: Deserialize<'a>,
@@ -221,14 +229,78 @@ impl<R: Read> Deserializer<R> {
     }
 
     fn read_string(&mut self, header: Header) -> Result<String> {
-        let body = self.read_payload(header)?;
         match header.element_type {
-            ElementType::Text => Ok(String::from_utf8(body)?),
-            ElementType::TextJ => todo!("json str"),
+            ElementType::Text => {
+                Ok(String::from_utf8(self.read_payload(header)?)?)
+            }
+            ElementType::TextJ => self.read_json_compatible_string(header),
             ElementType::Text5 => todo!("json5 str"),
             t => Err(Error::UnexpectedType(t)),
         }
     }
+}
+
+/// A reader wrapped that adds double quotes around the original text
+struct ReadWithQuotes<R: Read> {
+    reader: R,
+    started: bool,
+    finished: bool,
+}
+
+impl<R: Read> ReadWithQuotes<R> {
+    fn new(reader: R) -> Self {
+        Self {
+            reader,
+            started: false,
+            finished: false,
+        }
+    }
+}
+
+impl<R: Read> Read for ReadWithQuotes<R> {
+    fn read(&mut self, mut buf: &mut [u8]) -> std::io::Result<usize> {
+        let mut len = 0;
+
+        if buf.is_empty() || self.finished {
+            return Ok(0);
+        }
+
+        if !self.started {
+            buf[0] = b'"';
+            self.started = true;
+            buf = &mut buf[1..];
+            len = 1;
+        }
+
+        let read = self.reader.read(buf)?;
+        len += read;
+        if read < buf.len() {
+            buf[read] = b'"';
+            len += 1;
+            self.finished = true;
+        }
+        Ok(len)
+    }
+}
+
+#[test]
+fn test_read_with_quotes() {
+    let input = b"Hello, world!";
+    let mut buffer = String::new();
+    ReadWithQuotes::new(&input[..])
+        .read_to_string(&mut buffer)
+        .unwrap();
+    assert_eq!(buffer, "\"Hello, world!\"");
+    // now harder: read little by little
+    let mut adapter = ReadWithQuotes::new(&b"x"[..]);
+    let mut b = [0u8];
+    adapter.read(&mut b).unwrap();
+    assert_eq!(b[0], b'"');
+    adapter.read(&mut b).unwrap();
+    assert_eq!(b[0], b'x');
+    adapter.read(&mut b).unwrap();
+    assert_eq!(b[0], b'"');
+    assert_eq!(adapter.read(&mut b).unwrap(), 0);
 }
 
 fn usize_conversion(e: std::num::TryFromIntError) -> Error {
@@ -598,7 +670,12 @@ mod tests {
     }
 
     #[test]
-    fn test_string() {
+    fn test_string_noescape() {
         assert_eq!(from_bytes::<String>(b"\x57hello").unwrap(), "hello");
+    }
+
+    #[test]
+    fn test_string_json_escape() {
+        assert_eq!(from_bytes::<String>(b"\x28\\n").unwrap(), "\n");
     }
 }
