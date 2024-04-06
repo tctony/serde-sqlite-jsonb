@@ -20,7 +20,7 @@ pub(crate) fn parse_json5<I, T>(_input: I) -> crate::Result<T> {
 pub(crate) type Json5Error = serde_json5::Error;
 #[cfg(not(feature = "serde_json5"))]
 #[derive(Debug)]
-pub(crate) struct Json5Error;
+pub struct Json5Error;
 
 #[cfg(not(feature = "serde_json5"))]
 impl std::fmt::Display for Json5Error {

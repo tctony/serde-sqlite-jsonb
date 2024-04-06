@@ -309,11 +309,13 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
         todo!()
     }
 
-    fn deserialize_unit<V>(self, _visitor: V) -> Result<V::Value>
+    fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
+        let header = self.read_header()?;
+        self.read_null(header)?;
+        visitor.visit_unit()
     }
 
     fn deserialize_unit_struct<V>(
@@ -554,5 +556,10 @@ mod tests {
             from_bytes::<i64>(b"\xc3\xf5-9223372036854775808").unwrap(),
             -9223372036854775808
         );
+    }
+
+    #[test]
+    fn test_null() {
+        from_bytes::<()>(b"\x00").unwrap();
     }
 }
