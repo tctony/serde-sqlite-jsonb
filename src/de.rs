@@ -217,6 +217,14 @@ impl<R: Read> Deserializer<R> {
         Ok(crate::json::parse_json(&mut reader)?)
     }
 
+    fn read_json5_compatible_string(
+        &mut self,
+        header: Header,
+    ) -> Result<String> {
+        let mut reader = ReadWithQuotes::new(self.reader_with_limit(header)?);
+        Ok(crate::json::parse_json5(&mut reader)?)
+    }
+
     fn read_integer<T>(&mut self, header: Header) -> Result<T>
     where
         for<'a> T: Deserialize<'a>,
@@ -234,7 +242,7 @@ impl<R: Read> Deserializer<R> {
                 Ok(String::from_utf8(self.read_payload(header)?)?)
             }
             ElementType::TextJ => self.read_json_compatible_string(header),
-            ElementType::Text5 => todo!("json5 str"),
+            ElementType::Text5 => self.read_json5_compatible_string(header),
             t => Err(Error::UnexpectedType(t)),
         }
     }
@@ -677,5 +685,11 @@ mod tests {
     #[test]
     fn test_string_json_escape() {
         assert_eq!(from_bytes::<String>(b"\x28\\n").unwrap(), "\n");
+    }
+
+    #[test]
+    #[cfg(feature = "serde_json5")]
+    fn test_string_json5_escape() {
+        assert_eq!(from_bytes::<String>(b"\x49\\x0A").unwrap(), "\n");
     }
 }
