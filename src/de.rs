@@ -252,6 +252,8 @@ impl<R: Read> Deserializer<R> {
         for<'a> T: Deserialize<'a>,
     {
         match header.element_type {
+            ElementType::Int => self.read_json_compatible(header),
+            ElementType::Int5 => self.read_json5_compatible(header),
             ElementType::Float => self.read_json_compatible(header),
             ElementType::Float5 => self.read_json5_compatible(header),
             t => Err(Error::UnexpectedType(t)),
@@ -520,11 +522,11 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
         todo!()
     }
 
-    fn deserialize_identifier<V>(self, _visitor: V) -> Result<V::Value>
+    fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
+        self.deserialize_str(visitor)
     }
 
     fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value>
@@ -692,6 +694,21 @@ mod tests {
             from_bytes::<i64>(b"\xc3\xf5-9223372036854775808").unwrap(),
             -9223372036854775808
         );
+    }
+
+    #[test]
+    fn test_decoding_large_float() {
+        // large negative i64
+        assert_eq!(
+            from_bytes::<f64>(b"\xc5\x0c-0.123456789").unwrap(),
+            -0.123456789
+        );
+    }
+
+    #[test]
+    fn test_decoding_int_as_float() {
+        // large negative i64
+        assert_eq!(from_bytes::<f32>(b"\xc3\x0512345").unwrap(), 12345.);
     }
 
     #[test]
