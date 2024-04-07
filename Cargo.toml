@@ -1,16 +1,14 @@
 [package]
-name = "serde-example"
-version = "0.1.0"
-authors = ["David Tolnay <dtolnay@gmail.com>"]
+name = "serde_sqlite_jsonb"
+version = "0.0.1-alpha"
+authors = ["Ophir Lojkine"]
 categories = ["encoding"]
 description = "A Serializer and Deserializer for SQLite jsonb binary format"
-documentation = "https://serde.rs/data-format.html"
 edition = "2021"
 keywords = ["serde"]
 license = "MIT OR Apache-2.0"
-publish = false
-repository = "https://github.com/serde-rs/example-format"
-rust-version = "1.56"
+repository = "https://github.com/lovasoa/serde-sqlite-jsonb"
+rust-version = "1.63"
 
 
 [dependencies]
@@ -21,9 +19,6 @@ serde_json5 = { version = "0.1", optional = true }
 
 [features]
 default = ["serde_json"]
-
-[lib]
-doc-scrape-examples = false
 
 [dev-dependencies]
 serde_derive = "1.0"
