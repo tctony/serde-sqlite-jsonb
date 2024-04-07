@@ -16,6 +16,7 @@ pub enum Error {
     Io(std::io::Error),
     TrailingCharacters,
     Utf8(std::string::FromUtf8Error),
+    Empty,
 }
 
 impl ser::Error for Error {
@@ -45,6 +46,7 @@ impl Display for Error {
                 write!(f, "trailing data after the end of the jsonb value")
             }
             Error::Utf8(_) => write!(f, "invalid utf8 in string"),
+            Error::Empty => write!(f, "empty jsonb value"),
         }
     }
 }

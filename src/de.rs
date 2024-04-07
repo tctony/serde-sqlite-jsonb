@@ -95,7 +95,9 @@ impl<R: Read> Deserializer<R> {
           - and possibly also the size of the payload.
         */
         let mut header_0 = [0u8; 1];
-        self.reader.read_exact(&mut header_0)?;
+        if self.reader.read(&mut header_0)? == 0 {
+            return Err(Error::Empty);
+        }
         let first_byte = header_0[0];
         let upper_four_bits = first_byte >> 4;
         /*
@@ -308,6 +310,7 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
                     visitor.visit_i64(i)
                 }
             }
+            ElementType::Array => visitor.visit_seq(self),
             e => todo!("deserialize any for {:?}", e),
         }
     }
@@ -428,11 +431,16 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
         visitor.visit_newtype_struct(self)
     }
 
-    fn deserialize_seq<V>(self, _visitor: V) -> Result<V::Value>
+    fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
+        let head = self.read_header()?;
+        let limit: u64 =
+            head.payload_size.try_into().map_err(usize_conversion)?;
+        let reader = (&mut self.reader).take(limit);
+        let mut seq_deser = Deserializer { reader };
+        visitor.visit_seq(&mut seq_deser)
     }
 
     fn deserialize_tuple<V>(self, _len: usize, _visitor: V) -> Result<V::Value>
@@ -562,6 +570,21 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
     }
 }
 
+impl<'de, 'a, R: Read> de::SeqAccess<'de> for &'a mut Deserializer<R> {
+    type Error = Error;
+
+    fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>>
+    where
+        T: de::DeserializeSeed<'de>,
+    {
+        match seed.deserialize(&mut **self) {
+            Ok(v) => Ok(Some(v)),
+            Err(Error::Empty) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -607,6 +630,13 @@ mod tests {
             Header {
                 element_type: ElementType::Int,
                 payload_size: 1,
+            },
+        );
+        assert_header(
+            b"\xbb",
+            Header {
+                element_type: ElementType::Array,
+                payload_size: 11,
             },
         );
     }
@@ -694,5 +724,22 @@ mod tests {
     #[cfg(feature = "serde_json5")]
     fn test_string_json5_escape() {
         assert_eq!(from_bytes::<String>(b"\x49\\x0A").unwrap(), "\n");
+    }
+
+    #[test]
+    fn test_vec() {
+        assert_eq!(from_bytes::<Vec<()>>(b"\x0b").unwrap(), vec![]);
+        assert_eq!(
+            from_bytes::<Vec<u8>>(b"\x4b\x131\x132").unwrap(),
+            vec![1, 2]
+        );
+    }
+    #[test]
+    fn test_vec_of_vecs() {
+        assert_eq!(
+            from_bytes::<Vec<Vec<u8>>>(b"\xcb\x0a\x4b\x131\x132\x4b\x133\x134")
+                .unwrap(),
+            vec![vec![1, 2], vec![3, 4]]
+        );
     }
 }
