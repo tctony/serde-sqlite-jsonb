@@ -7,7 +7,7 @@
 // except according to those terms.
 
 use crate::error::{Error, Result};
-use serde::de::{self, Deserialize, Visitor};
+use serde::de::{self, Deserialize, SeqAccess, Visitor};
 use std::io::Read;
 
 pub struct Deserializer<R: Read> {
@@ -436,9 +436,7 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
         V: Visitor<'de>,
     {
         let head = self.read_header()?;
-        let limit: u64 =
-            head.payload_size.try_into().map_err(usize_conversion)?;
-        let reader = (&mut self.reader).take(limit);
+        let reader = self.reader_with_limit(head)?;
         let mut seq_deser = Deserializer { reader };
         visitor.visit_seq(&mut seq_deser)
     }
@@ -462,11 +460,14 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
         todo!()
     }
 
-    fn deserialize_map<V>(self, _visitor: V) -> Result<V::Value>
+    fn deserialize_map<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
+        let head = self.read_header()?;
+        let reader = self.reader_with_limit(head)?;
+        let mut seq_deser = Deserializer { reader };
+        visitor.visit_map(&mut seq_deser)
     }
 
     fn deserialize_struct<V>(
@@ -582,6 +583,25 @@ impl<'de, 'a, R: Read> de::SeqAccess<'de> for &'a mut Deserializer<R> {
             Err(Error::Empty) => Ok(None),
             Err(e) => Err(e),
         }
+    }
+}
+
+impl<'de, 'a, R: Read> de::MapAccess<'de> for &'a mut Deserializer<R> {
+    type Error = Error;
+
+    fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>>
+    where
+        K: de::DeserializeSeed<'de>,
+    {
+        self.next_element_seed(seed)
+    }
+
+    fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value>
+    where
+        V: de::DeserializeSeed<'de>,
+    {
+        self.next_element_seed(seed)
+            .and_then(|opt| opt.ok_or_else(|| Error::Empty))
     }
 }
 
@@ -734,6 +754,7 @@ mod tests {
             vec![1, 2]
         );
     }
+
     #[test]
     fn test_vec_of_vecs() {
         assert_eq!(
@@ -741,5 +762,17 @@ mod tests {
                 .unwrap(),
             vec![vec![1, 2], vec![3, 4]]
         );
+    }
+
+    #[test]
+    fn test_hashmap() {
+        use std::collections::HashMap;
+        let actual =
+            from_bytes::<HashMap<String, bool>>(b"\x6c\x17a\x02\x17b\x01")
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<_>>();
+        let expected = [("a".into(), false), ("b".into(), true)];
+        assert_eq!(actual, expected);
     }
 }
