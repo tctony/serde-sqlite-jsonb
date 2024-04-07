@@ -240,7 +240,7 @@ impl<R: Read> Deserializer<R> {
 
     fn read_string(&mut self, header: Header) -> Result<String> {
         match header.element_type {
-            ElementType::Text => {
+            ElementType::Text | ElementType::TextRaw => {
                 Ok(String::from_utf8(self.read_payload(header)?)?)
             }
             ElementType::TextJ => self.read_json_compatible_string(header),
@@ -311,7 +311,18 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
                 }
             }
             ElementType::Array => visitor.visit_seq(self),
-            e => todo!("deserialize any for {:?}", e),
+            ElementType::Object => visitor.visit_map(self),
+            ElementType::Text
+            | ElementType::TextJ
+            | ElementType::Text5
+            | ElementType::TextRaw => {
+                visitor.visit_string(self.read_string(header)?)
+            }
+            ElementType::Reserved13
+            | ElementType::Reserved14
+            | ElementType::Reserved15 => {
+                Err(Error::UnexpectedType(header.element_type))
+            }
         }
     }
 
@@ -556,18 +567,18 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
         visitor.visit_string(self.read_string(header)?)
     }
 
-    fn deserialize_bytes<V>(self, _visitor: V) -> Result<V::Value>
+    fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
+        self.deserialize_seq(visitor)
     }
 
-    fn deserialize_byte_buf<V>(self, _visitor: V) -> Result<V::Value>
+    fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
+        self.deserialize_seq(visitor)
     }
 }
 
@@ -769,10 +780,10 @@ mod tests {
         use std::collections::HashMap;
         let actual =
             from_bytes::<HashMap<String, bool>>(b"\x6c\x17a\x02\x17b\x01")
-                .unwrap()
-                .into_iter()
-                .collect::<Vec<_>>();
-        let expected = [("a".into(), false), ("b".into(), true)];
+                .unwrap();
+        let expected = [("a".into(), false), ("b".into(), true)]
+            .into_iter()
+            .collect();
         assert_eq!(actual, expected);
     }
 
