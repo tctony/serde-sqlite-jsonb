@@ -474,12 +474,12 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
         self,
         _name: &'static str,
         _fields: &'static [&'static str],
-        _visitor: V,
+        visitor: V,
     ) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
+        self.deserialize_map(visitor)
     }
 
     fn deserialize_enum<V>(
@@ -773,6 +773,18 @@ mod tests {
                 .into_iter()
                 .collect::<Vec<_>>();
         let expected = [("a".into(), false), ("b".into(), true)];
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_struct() {
+        #[derive(Debug, PartialEq, serde_derive::Deserialize)]
+        struct Test {
+            a: bool,
+            b: bool,
+        }
+        let actual = from_bytes::<Test>(b"\x6c\x17a\x02\x17b\x01").unwrap();
+        let expected = Test { a: false, b: true };
         assert_eq!(actual, expected);
     }
 }
