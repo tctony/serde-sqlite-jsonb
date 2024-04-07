@@ -283,8 +283,30 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
                 visitor.visit_unit()
             }
             ElementType::True | ElementType::False => {
-                let b = self.read_bool(header)?;
-                visitor.visit_bool(b)
+                visitor.visit_bool(self.read_bool(header)?)
+            }
+            ElementType::Float | ElementType::Float5 => {
+                visitor.visit_f64(self.read_float(header)?)
+            }
+            ElementType::Int | ElementType::Int5 => {
+                let i: i64 = self.read_integer(header)?;
+                if let Ok(x) = u8::try_from(i) {
+                    visitor.visit_u8(x)
+                } else if let Ok(x) = i8::try_from(i) {
+                    visitor.visit_i8(x)
+                } else if let Ok(x) = u16::try_from(i) {
+                    visitor.visit_u16(x)
+                } else if let Ok(x) = i16::try_from(i) {
+                    visitor.visit_i16(x)
+                } else if let Ok(x) = u32::try_from(i) {
+                    visitor.visit_u32(x)
+                } else if let Ok(x) = i32::try_from(i) {
+                    visitor.visit_i32(x)
+                } else if let Ok(x) = u64::try_from(i) {
+                    visitor.visit_u64(x)
+                } else {
+                    visitor.visit_i64(i)
+                }
             }
             e => todo!("deserialize any for {:?}", e),
         }
