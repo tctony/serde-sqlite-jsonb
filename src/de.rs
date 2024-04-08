@@ -492,23 +492,23 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
         visitor.visit_seq(&mut seq_deser)
     }
 
-    fn deserialize_tuple<V>(self, _len: usize, _visitor: V) -> Result<V::Value>
+    fn deserialize_tuple<V>(self, _len: usize, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
+        self.deserialize_seq(visitor)
     }
 
     fn deserialize_tuple_struct<V>(
         self,
         _name: &'static str,
         _len: usize,
-        _visitor: V,
+        visitor: V,
     ) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
+        self.deserialize_seq(visitor)
     }
 
     fn deserialize_map<V>(self, visitor: V) -> Result<V::Value>
@@ -866,6 +866,24 @@ mod tests {
     #[cfg(feature = "serde_json5")]
     fn test_string_json5_escape() {
         assert_eq!(from_bytes::<String>(b"\x49\\x0A").unwrap(), "\n");
+    }
+
+    #[test]
+    fn test_tuple() {
+        assert_eq!(
+            from_bytes::<(u8, i64, char)>(b"\x6b\x131\x132\x18x").unwrap(),
+            (1, 2, 'x')
+        );
+    }
+
+    #[test]
+    fn test_tuple_struct() {
+        #[derive(Debug, PartialEq, serde_derive::Deserialize)]
+        struct Test(Option<String>, bool, bool);
+        assert_eq!(
+            from_bytes::<Test>(b"\x3b\x00\x01\x02").unwrap(),
+            Test(None, true, false)
+        );
     }
 
     #[test]
