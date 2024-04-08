@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rusqlite::{Connection, DatabaseName};
 use serde_derive::Deserialize;
 
@@ -61,13 +63,13 @@ fn test_large_object_as_blob() -> rusqlite::Result<()> {
     )?;
     let my_blob =
         conn.blob_open(DatabaseName::Main, "bigdata", "data", 42, true)?;
-    let parsed: serde_json::Value =
+    let parsed: HashMap<String, String> =
         serde_sqlite_jsonb::from_reader(my_blob).unwrap();
     assert_eq!(
         parsed,
-        serde_json::json!({
-            "my long string": "x".repeat(10_000_000)
-        })
+        [("my long string".into(), "x".repeat(10_000_000))]
+            .into_iter()
+            .collect()
     );
     Ok(())
 }
