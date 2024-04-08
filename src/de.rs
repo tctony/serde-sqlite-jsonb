@@ -7,7 +7,7 @@
 // except according to those terms.
 
 use crate::error::{Error, Result};
-use serde::de::{self, Deserialize, SeqAccess, Visitor};
+use serde::de::{self, Deserialize, IntoDeserializer, SeqAccess, Visitor};
 use std::io::Read;
 
 pub struct Deserializer<R: Read> {
@@ -27,11 +27,7 @@ impl<'a> Deserializer<&'a [u8]> {
     }
 }
 
-// By convention, the public API of a Serde deserializer is one or more
-// `from_xyz` methods such as `from_str`, `from_bytes`, or `from_reader`
-// depending on what Rust types the deserializer is able to consume as input.
-//
-// This basic deserializer supports only `from_str`.
+/// Deserialize an instance of type `T` from a byte slice of SQLite JSONB data.
 pub fn from_bytes<'a, T>(s: &'a [u8]) -> Result<T>
 where
     T: Deserialize<'a>,
@@ -45,41 +41,57 @@ where
     }
 }
 
+/// Deserialize an instance of type `T` from a byte slice of SQLite JSONB data.
+pub fn from_reader<'a, R: Read, T>(reader: R) -> Result<T>
+where
+    T: Deserialize<'a>,
+{
+    let mut deserializer = Deserializer { reader };
+    let t = T::deserialize(&mut deserializer)?;
+    let Deserializer { mut reader } = deserializer;
+    if reader.read(&mut [0])? == 0 {
+        Ok(t)
+    } else {
+        Err(Error::TrailingCharacters)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 /// Represents the different element types in the JSONB format.
 pub enum ElementType {
     /// The element is a JSON "null".
-    Null,
+    Null = 0,
     /// The element is a JSON "true".
-    True,
+    True = 1,
     /// The element is a JSON "false".
-    False,
+    False = 2,
     /// The element is a JSON integer value in the canonical RFC 8259 format.
-    Int,
+    Int = 3,
     /// The element is a JSON integer value that is not in the canonical format.
-    Int5,
+    Int5 = 4,
     /// The element is a JSON floating-point value in the canonical RFC 8259 format.
-    Float,
+    Float = 5,
     /// The element is a JSON floating-point value that is not in the canonical format.
-    Float5,
+    Float5 = 6,
     /// The element is a JSON string value that does not contain any escapes.
-    Text,
+    Text = 7,
     /// The element is a JSON string value that contains RFC 8259 character escapes.
-    TextJ,
+    TextJ = 8,
     /// The element is a JSON string value that contains character escapes, including some from JSON5.
-    Text5,
+    Text5 = 9,
     /// The element is a JSON string value that contains UTF8 characters that need to be escaped.
-    TextRaw,
+    TextRaw = 0xA,
     /// The element is a JSON array.
-    Array,
+    Array = 0xB,
     /// The element is a JSON object.
-    Object,
+    Object = 0xC,
     /// Reserved for future expansion.
-    Reserved13,
+    Reserved13 = 0xD,
     /// Reserved for future expansion.
-    Reserved14,
+    Reserved14 = 0xE,
     /// Reserved for future expansion.
-    Reserved15,
+    Reserved15 = 0xF,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,7 +100,24 @@ pub struct Header {
     payload_size: usize,
 }
 
+impl Header {
+    fn serialize(self) -> [u8; 9] {
+        let mut s = [0u8; 9];
+        s[0] = (self.element_type as u8) | 0xF0;
+        let payload_size = self.payload_size.to_be_bytes();
+        s[1..].copy_from_slice(&payload_size);
+        s
+    }
+}
+
 impl<R: Read> Deserializer<R> {
+    fn with_header(&mut self, header: Header) -> Deserializer<impl Read + '_> {
+        // a little bit of a hack to "unread" a header that was already read
+        let header_bytes = std::io::Cursor::new(header.serialize());
+        let reader = header_bytes.chain(&mut self.reader);
+        Deserializer { reader }
+    }
+
     fn read_header(&mut self) -> Result<Header> {
         /*  The upper four bits of the first byte of the header determine
           - size of the header
@@ -261,24 +290,15 @@ impl<R: Read> Deserializer<R> {
             t => Err(Error::UnexpectedType(t)),
         }
     }
-}
 
-fn read_with_quotes(r: impl Read) -> impl Read {
-    b"\"".chain(r).chain(&b"\""[..])
-}
-
-fn usize_conversion(e: std::num::TryFromIntError) -> Error {
-    Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-}
-
-impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
-    type Error = Error;
-
-    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value>
+    fn deserialize_any_with_header<'de, V>(
+        &mut self,
+        header: Header,
+        visitor: V,
+    ) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        let header = self.read_header()?;
         match header.element_type {
             ElementType::Null => {
                 self.read_null(header)?;
@@ -324,6 +344,26 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
                 Err(Error::UnexpectedType(header.element_type))
             }
         }
+    }
+}
+
+fn read_with_quotes(r: impl Read) -> impl Read {
+    b"\"".chain(r).chain(&b"\""[..])
+}
+
+fn usize_conversion(e: std::num::TryFromIntError) -> Error {
+    Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+}
+
+impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
+    type Error = Error;
+
+    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        let header = self.read_header()?;
+        self.deserialize_any_with_header(header, visitor)
     }
 
     fn deserialize_bool<V>(self, visitor: V) -> Result<V::Value>
@@ -404,10 +444,10 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
     {
         let header = self.read_header()?;
         if header.element_type == ElementType::Null {
-            self.read_null(header)?;
             visitor.visit_none()
         } else {
-            visitor.visit_some(self)
+            let mut deser = self.with_header(header);
+            visitor.visit_some(&mut deser)
         }
     }
 
@@ -497,12 +537,32 @@ impl<'de, 'a, R: Read> de::Deserializer<'de> for &'a mut Deserializer<R> {
         self,
         _name: &'static str,
         _variants: &'static [&'static str],
-        _visitor: V,
+        visitor: V,
     ) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        todo!()
+        let header = self.read_header()?;
+        match header.element_type {
+            ElementType::Text
+            | ElementType::TextJ
+            | ElementType::Text5
+            | ElementType::TextRaw => {
+                let s = self.read_string(header)?;
+                visitor.visit_enum(s.into_deserializer())
+            }
+            ElementType::Object => {
+                let reader = self.reader_with_limit(header)?;
+                let mut de = Deserializer { reader };
+                let r = visitor.visit_enum(&mut de);
+                if de.reader.read(&mut [0])? == 0 {
+                    r
+                } else {
+                    Err(Error::TrailingCharacters)
+                }
+            }
+            other => Err(Error::UnexpectedType(other)),
+        }
     }
 
     fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value>
@@ -616,6 +676,51 @@ impl<'de, 'a, R: Read> de::MapAccess<'de> for &'a mut Deserializer<R> {
     }
 }
 
+impl<'de, 'a, R: Read> de::EnumAccess<'de> for &'a mut Deserializer<R> {
+    type Error = Error;
+    type Variant = Self;
+
+    fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self::Variant)>
+    where
+        V: de::DeserializeSeed<'de>,
+    {
+        let val = seed.deserialize(&mut *self)?;
+        Ok((val, self))
+    }
+}
+
+impl<'de, 'a, R: Read> de::VariantAccess<'de> for &'a mut Deserializer<R> {
+    type Error = Error;
+
+    fn unit_variant(self) -> Result<()> {
+        Ok(())
+    }
+
+    fn newtype_variant_seed<T>(self, seed: T) -> Result<T::Value>
+    where
+        T: de::DeserializeSeed<'de>,
+    {
+        seed.deserialize(self)
+    }
+
+    fn tuple_variant<V>(self, _len: usize, visitor: V) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        de::Deserializer::deserialize_seq(self, visitor)
+    }
+
+    fn struct_variant<V>(
+        self,
+        _fields: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value>
+    where
+        V: Visitor<'de>,
+    {
+        de::Deserializer::deserialize_map(self, visitor)
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -738,7 +843,13 @@ mod tests {
     #[test]
     fn test_null() {
         from_bytes::<()>(b"\x00").unwrap();
+    }
+
+    #[test]
+    fn test_option() {
         assert_eq!(from_bytes::<Option<u64>>(b"\x00").unwrap(), None);
+        assert_eq!(from_bytes::<Option<Vec<u8>>>(b"\x00").unwrap(), None);
+        assert_eq!(from_bytes::<Option<u8>>(b"\x2342").unwrap(), Some(42));
     }
 
     #[test]
@@ -767,10 +878,26 @@ mod tests {
     }
 
     #[test]
+    fn test_vec_opts() {
+        assert_eq!(
+            from_bytes::<Vec<Option<String>>>(b"\xbb\x471234\x00\x475678")
+                .unwrap(),
+            vec![Some("1234".to_string()), None, Some("5678".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_vec_with_reader() {
+        assert_eq!(from_reader::<_, Vec<()>>(&b"\x0b"[..]).unwrap(), vec![]);
+    }
+
+    #[test]
     fn test_vec_of_vecs() {
         assert_eq!(
-            from_bytes::<Vec<Vec<u8>>>(b"\xcb\x0a\x4b\x131\x132\x4b\x133\x134")
-                .unwrap(),
+            from_bytes::<Vec<Vec<i16>>>(
+                b"\xcb\x0a\x4b\x131\x132\x4b\x133\x134"
+            )
+            .unwrap(),
             vec![vec![1, 2], vec![3, 4]]
         );
     }
@@ -797,5 +924,72 @@ mod tests {
         let actual = from_bytes::<Test>(b"\x6c\x17a\x02\x17b\x01").unwrap();
         let expected = Test { a: false, b: true };
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_complex_struct() {
+        let bytes = b"\xcc\x3a\x27id\x131\x47name\x87John Doe\xc7\x0dphone_numbers\xbb\x471234\x00\x475678\x47data\x6b\x131\x132\x133";
+        let mut deser = Deserializer::from_bytes(bytes);
+        #[derive(Debug, PartialEq, serde_derive::Deserialize)]
+        struct Person {
+            id: i32,
+            name: String,
+            phone_numbers: Vec<Option<String>>,
+            data: Vec<u8>,
+        }
+        let person: Person = Person::deserialize(&mut deser).unwrap();
+        assert_eq!(
+            person,
+            Person {
+                id: 1,
+                name: "John Doe".to_string(),
+                phone_numbers: vec![
+                    Some("1234".to_string()),
+                    None,
+                    Some("5678".to_string())
+                ],
+                data: vec![1, 2, 3]
+            }
+        );
+    }
+
+    #[test]
+    fn test_basic_enum() {
+        #[derive(Debug, PartialEq, serde_derive::Deserialize)]
+        enum Test {
+            X,
+            Y,
+        }
+        let actual: Vec<Test> = from_bytes(b"\x4b\x18X\x18Y").unwrap();
+        let expected = vec![Test::X, Test::Y];
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_externally_tagged_enum() {
+        #[derive(Debug, PartialEq, serde_derive::Deserialize)]
+        enum Test {
+            X(String),
+            Y(bool),
+        }
+        // {"X": "Y"}
+        let actual: Test = from_bytes(b"\x4c\x18X\x18Y").unwrap();
+        let expected = Test::X("Y".to_string());
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_externally_tagged_enum_too_large() {
+        #[derive(Debug, PartialEq, serde_derive::Deserialize)]
+        enum Test {
+            X(char),
+            Y(char),
+        }
+        assert_eq!(
+            from_bytes::<Vec<Test>>(b"\x9b\x8c\x18X\x18Y\x18Y\x18A")
+                .unwrap_err()
+                .to_string(),
+            Error::TrailingCharacters.to_string()
+        );
     }
 }

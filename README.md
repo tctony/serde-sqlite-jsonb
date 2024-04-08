@@ -8,11 +8,46 @@ The binary format can contain raw json data, so this crate depends on the `serde
 Since SQLite also supports json5, the `serde-json5` feature can be used if json5 support is needed.
 
 By default, the (faster) `serde_json` feature is enabled and this crate returns an error when trying to parse json5 data.
-To enable json5 support, disable the default features and enable the `serde-json5` feature:
+To enable json5 support, enable the `serde-json5` feature
+(and optionally disable the default features to use the json5 parser even for json data):
 
 ```toml
 [dependencies]
 serde-sqlite-jsonb = { version = "0.1", features = ["serde-json5"], default-features = false }
+```
+
+## Usage
+
+This library does not handle the SQLite connection,
+so you need to use a crate like `rusqlite` or `sqlx` to interact with the database.
+
+Once you have extracted the JSONB data from the database,
+either as a `Vec<u8>` or as a `std::io::Read` object that streams the BLOB data
+from the database, you can use the `serde_sqlite_jsonb` crate to deserialize the JSON data,
+either to your own data structures or to a `serde_json::Value`.
+
+### Deserialize JSONB from a query result
+
+```rust
+let conn = rusqlite::Connection::open_in_memory()?;
+let blob: Vec<u8> = conn.query_row(
+    r#"select jsonb('{"id": 1, "name": "John Doe"}')"#, [], |row| row.get(0),
+)?;
+let person: Person = serde_sqlite_jsonb::from_bytes(&blob).unwrap();
+```
+
+### Streaming deserialization from a SQLite BLOB
+
+```rust
+let my_blob = conn.blob_open( // returns an object that implements std::io::Read
+    DatabaseName::Main,
+    "my_table", // table name
+    "my_jsonb_column", // column name
+    42, // primary key (rowid)
+    true // read-only
+)?;
+let parsed: serde_json::Value = // or any other type that implements Deserialize
+    serde_sqlite_jsonb::from_reader(my_blob).unwrap();
 ```
 
 ## Format
@@ -36,33 +71,39 @@ bits:  0  1  2  3  4  5  6  7  8
 ```
 
 ### Header
-
 #### Payload size
 
- - If the payload data is between 0 and 11 bytes (inclusive), the size is encoded in the first 4 bits of the header.
- - If the payload data is between 12 and 2^8 - 1 bytes (inclusive), the size is encoded in the next byte and the first 4 bits of the header are set to 12.
- - If the payload data is between 2^8 and 2^16 - 1 bytes (inclusive), the size is encoded in the next two bytes and the first 4 bits of the header are set to 13.
- - If the payload data is between 2^16 and 2^32 - 1 bytes (inclusive), the size is encoded in the next four bytes and the first 4 bits of the header are set to 14.
- - If the payload data is between 2^32 and 2^64 - 1 bytes (inclusive), the size is encoded in the next eight bytes and the first 4 bits of the header are set to 15.
+If the payload data is between 0 and 11 bytes (inclusive), the size is encoded in the first 4 bits of the header.
+Otherwise, the size of the payload is encoded in the next bytes, and the first 4 bits indicate the number of bytes used to encode the payload size, using the following table:
+
+| Payload Data Size Range | Size Encoding | First 4 bits of Header |
+|-------------------------|---------------|------------------------|
+| 0 to 11 bytes           | u4 (embedded in first 4 bits)  | 0 to 11 (0x0 to 0xB)             |
+| 12 to 2^8 - 1 bytes     | u8     | 12 (0xC)               |
+| 2^8 to 2^16 - 1 bytes   | u16 | 13 (0xD)               |
+| 2^16 to 2^32 - 1 bytes  | u32 | 14 (0xE)              |
+| 2^32 to 2^64 - 1 bytes  | u64 | 15 (0xF)             |
 
 #### Type
 
-- `Null` (0x0): The element is a JSON "null".
-- `True` (0x1): The element is a JSON "true".
-- `False` (0x2): The element is a JSON "false".
-- `Int` (0x3): The element is a JSON integer value in the canonical RFC 8259 format.
-- `Int5` (0x4): The element is a JSON integer value that is not in the canonical format.
-- `Float` (0x5): The element is a JSON floating-point value in the canonical RFC 8259 format.
-- `Float5` (0x6): The element is a JSON floating-point value that is not in the canonical format.
-- `Text` (0x7): The element is a JSON string value that does not contain any escapes.
-- `TextJ` (0x8): The element is a JSON string value that contains RFC 8259 character escapes.
-- `Text5` (0x9): The element is a JSON string value that contains character escapes, including some from JSON5.
-- `TextRaw` (0xA): The element is a JSON string value that contains UTF8 characters that need to be escaped.
-- `Array` (0xB): The element is a JSON array.
-- `Object` (0xC): The element is a JSON object.
-- `Reserved13` (0xD): Reserved for future expansion.
-- `Reserved14` (0xE): Reserved for future expansion.
-- `Reserved15` (0xF): Reserved for future expansion.
+| Type         | Hex Code | Description |
+|--------------|----------|-------------|
+| `Null`       | 0x0      | The element is a JSON "null". |
+| `True`       | 0x1      | The element is a JSON "true". |
+| `False`      | 0x2      | The element is a JSON "false". |
+| `Int`        | 0x3      | The element is a JSON integer value in the canonical RFC 8259 format. |
+| `Int5`       | 0x4      | The element is a JSON5 integer, such as `0xABC`. |
+| `Float`      | 0x5      | The element is a JSON floating-point value in the canonical RFC 8259 format. |
+| `Float5`     | 0x6      | The element is a JSON5 floating-point value that is not in the canonical JSON format. |
+| `Text`       | 0x7      | The element is a JSON string value that does not contain any escapes. |
+| `TextJ`      | 0x8      | The element is a JSON string value that contains RFC 8259 character escapes. |
+| `Text5`      | 0x9      | The element is a JSON5 string value that contains character escapes, including some from JSON5. |
+| `TextRaw`    | 0xA      | The element is a JSON string value that contains UTF8 characters that need escaping in JSON. |
+| `Array`      | 0xB      | The element is a JSON array. The header of the first array element starts immediately after the array header. |
+| `Object`     | 0xC      | The element is a JSON object. Object keys (strings) and values are alternated in the payload. |
+| `Reserved13` | 0xD      | Reserved for future expansion. |
+| `Reserved14` | 0xE      | Reserved for future expansion. |
+| `Reserved15` | 0xF      | Reserved for future expansion. |
 
 #### Example
 
