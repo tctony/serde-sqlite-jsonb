@@ -3,7 +3,7 @@ use crate::{
     header::ElementType,
 };
 use serde::ser::{self, Serialize};
-use std::io::{Cursor, Seek, Write};
+use std::io::{Cursor, Seek, SeekFrom, Write};
 
 pub struct Serializer<W: Write + Seek> {
     writer: W,
@@ -48,6 +48,26 @@ impl<W: Write + Seek> Serializer<W> {
         }
         .write_minimal(&mut self.writer)?;
         self.writer.write_all(data.as_bytes())?;
+        Ok(())
+    }
+    fn write_displayable_nocopy(
+        &mut self,
+        element_type: ElementType,
+        data: impl std::fmt::Display,
+    ) -> Result<()> {
+        let header_bytes_max = crate::header::Header {
+            element_type,
+            payload_size: 0,
+        }
+        .serialize();
+        self.writer.write_all(&header_bytes_max)?;
+        let data_start = self.writer.stream_position()?;
+        write!(self.writer, "{}", data)?;
+        let data_end = self.writer.stream_position()?;
+        let payload_size = data_end - data_start;
+        self.writer.seek(SeekFrom::Start(data_start - 8))?;
+        self.writer.write_all(&payload_size.to_be_bytes())?;
+        self.writer.seek(SeekFrom::Start(data_end))?;
         Ok(())
     }
 }
@@ -393,11 +413,11 @@ mod tests {
 
     #[test]
     fn test_serialize_u8() {
-        assert_eq!(to_vec(&42u8).unwrap(), b"\x2342");
+        assert_eq!(to_vec(&42u8).unwrap(), b"\xf3\0\0\0\0\0\0\0\x0242");
     }
 
     #[test]
     fn test_serialize_i64() {
-        assert_eq!(to_vec(&42i64).unwrap(), b"\x2342");
+        assert_eq!(to_vec(&42i64).unwrap(), b"\xf3\0\0\0\0\0\0\0\x0242");
     }
 }
