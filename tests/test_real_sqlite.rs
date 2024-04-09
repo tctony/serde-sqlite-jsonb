@@ -26,7 +26,7 @@ fn test_fetch_json_object() -> rusqlite::Result<()> {
         [],
         |row| row.get(0),
     )?;
-    let person: Person = serde_sqlite_jsonb::from_bytes(&blob).unwrap();
+    let person: Person = serde_sqlite_jsonb::from_slice(&blob).unwrap();
     assert_eq!(
         person,
         Person {

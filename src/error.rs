@@ -1,7 +1,7 @@
 use serde::{de, ser};
 use std::fmt::{self, Display};
 
-use crate::de::ElementType;
+use crate::header::ElementType;
 
 pub type Result<T> = std::result::Result<T, Error>;
 

@@ -19,7 +19,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust: [1.63, stable]
+        rust: [
+          1.64, # rusqlite requires rust >= 1.64
+          stable
+        ]
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4

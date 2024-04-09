@@ -7,20 +7,18 @@
 // except according to those terms.
 
 use crate::error::{Error, Result};
+use crate::header::{ElementType, Header};
 use serde::de::{self, Deserialize, IntoDeserializer, SeqAccess, Visitor};
 use std::io::Read;
 
+/// A structure that deserializes SQLite JSONB data into Rust values.
 pub struct Deserializer<R: Read> {
-    // This string starts with the input data and characters are truncated off
-    // the beginning as data is parsed.
+    /// The reader that the deserializer reads from.
     reader: R,
 }
 
 impl<'a> Deserializer<&'a [u8]> {
-    // By convention, `Deserializer` constructors are named like `from_xyz`.
-    // That way basic use cases are satisfied by something like
-    // `serde_json::from_str(...)` while advanced use cases that require a
-    // deserializer can make one with `serde_json::Deserializer::from_str(...)`.
+    /// Deserialize an instance of type `T` from a byte slice of SQLite JSONB data.
     #[allow(clippy::should_implement_trait)]
     pub fn from_bytes(input: &'a [u8]) -> Self {
         Deserializer { reader: input }
@@ -28,7 +26,7 @@ impl<'a> Deserializer<&'a [u8]> {
 }
 
 /// Deserialize an instance of type `T` from a byte slice of SQLite JSONB data.
-pub fn from_bytes<'a, T>(s: &'a [u8]) -> Result<T>
+pub fn from_slice<'a, T>(s: &'a [u8]) -> Result<T>
 where
     T: Deserialize<'a>,
 {
@@ -53,60 +51,6 @@ where
         Ok(t)
     } else {
         Err(Error::TrailingCharacters)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-/// Represents the different element types in the JSONB format.
-pub enum ElementType {
-    /// The element is a JSON "null".
-    Null = 0,
-    /// The element is a JSON "true".
-    True = 1,
-    /// The element is a JSON "false".
-    False = 2,
-    /// The element is a JSON integer value in the canonical RFC 8259 format.
-    Int = 3,
-    /// The element is a JSON integer value that is not in the canonical format.
-    Int5 = 4,
-    /// The element is a JSON floating-point value in the canonical RFC 8259 format.
-    Float = 5,
-    /// The element is a JSON floating-point value that is not in the canonical format.
-    Float5 = 6,
-    /// The element is a JSON string value that does not contain any escapes.
-    Text = 7,
-    /// The element is a JSON string value that contains RFC 8259 character escapes.
-    TextJ = 8,
-    /// The element is a JSON string value that contains character escapes, including some from JSON5.
-    Text5 = 9,
-    /// The element is a JSON string value that contains UTF8 characters that need to be escaped.
-    TextRaw = 0xA,
-    /// The element is a JSON array.
-    Array = 0xB,
-    /// The element is a JSON object.
-    Object = 0xC,
-    /// Reserved for future expansion.
-    Reserved13 = 0xD,
-    /// Reserved for future expansion.
-    Reserved14 = 0xE,
-    /// Reserved for future expansion.
-    Reserved15 = 0xF,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Header {
-    element_type: ElementType,
-    payload_size: usize,
-}
-
-impl Header {
-    fn serialize(self) -> [u8; 9] {
-        let mut s = [0u8; 9];
-        s[0] = (self.element_type as u8) | 0xF0;
-        let payload_size = self.payload_size.to_be_bytes();
-        s[1..].copy_from_slice(&payload_size);
-        s
     }
 }
 
@@ -158,28 +102,8 @@ impl<R: Read> Deserializer<R> {
             self.reader.read_exact(&mut buf[start..8])?;
             usize::from_be_bytes(buf)
         };
-        let lower_four_bits = first_byte & 0x0F;
-        let element_type = match lower_four_bits {
-            0 => ElementType::Null,
-            1 => ElementType::True,
-            2 => ElementType::False,
-            3 => ElementType::Int,
-            4 => ElementType::Int5,
-            5 => ElementType::Float,
-            6 => ElementType::Float5,
-            7 => ElementType::Text,
-            8 => ElementType::TextJ,
-            9 => ElementType::Text5,
-            10 => ElementType::TextRaw,
-            11 => ElementType::Array,
-            12 => ElementType::Object,
-            13 => ElementType::Reserved13,
-            14 => ElementType::Reserved14,
-            15 => ElementType::Reserved15,
-            n => unreachable!("{n} does not fit in four bits"),
-        };
         Ok(Header {
-            element_type,
+            element_type: ElementType::from(first_byte),
             payload_size,
         })
     }
@@ -780,18 +704,18 @@ mod tests {
     fn assert_all_int_types_eq(encoded: &[u8], expected: i64) {
         // unsigned
         assert_eq!(
-            from_bytes::<i8>(encoded).unwrap(),
+            from_slice::<i8>(encoded).unwrap(),
             expected as i8,
             "parsing {encoded:?} as i8"
         );
-        assert_eq!(from_bytes::<i16>(encoded).unwrap(), expected as i16);
-        assert_eq!(from_bytes::<i32>(encoded).unwrap(), expected as i32);
-        assert_eq!(from_bytes::<i64>(encoded).unwrap(), expected);
+        assert_eq!(from_slice::<i16>(encoded).unwrap(), expected as i16);
+        assert_eq!(from_slice::<i32>(encoded).unwrap(), expected as i32);
+        assert_eq!(from_slice::<i64>(encoded).unwrap(), expected);
         // signed
-        assert_eq!(from_bytes::<u8>(encoded).unwrap(), expected as u8);
-        assert_eq!(from_bytes::<u16>(encoded).unwrap(), expected as u16);
-        assert_eq!(from_bytes::<u32>(encoded).unwrap(), expected as u32);
-        assert_eq!(from_bytes::<u64>(encoded).unwrap(), expected as u64);
+        assert_eq!(from_slice::<u8>(encoded).unwrap(), expected as u8);
+        assert_eq!(from_slice::<u16>(encoded).unwrap(), expected as u16);
+        assert_eq!(from_slice::<u32>(encoded).unwrap(), expected as u32);
+        assert_eq!(from_slice::<u64>(encoded).unwrap(), expected as u64);
     }
 
     #[test]
@@ -815,12 +739,12 @@ mod tests {
     #[test]
     fn test_decoding_large_int() {
         assert_eq!(
-            from_bytes::<u64>(b"\xc3\xf418446744073709551615").unwrap(),
+            from_slice::<u64>(b"\xc3\xf418446744073709551615").unwrap(),
             18446744073709551615
         );
         // large negative i64
         assert_eq!(
-            from_bytes::<i64>(b"\xc3\xf5-9223372036854775808").unwrap(),
+            from_slice::<i64>(b"\xc3\xf5-9223372036854775808").unwrap(),
             -9223372036854775808
         );
     }
@@ -829,7 +753,7 @@ mod tests {
     fn test_decoding_large_float() {
         // large negative i64
         assert_eq!(
-            from_bytes::<f64>(b"\xc5\x0c-0.123456789").unwrap(),
+            from_slice::<f64>(b"\xc5\x0c-0.123456789").unwrap(),
             -0.123456789
         );
     }
@@ -837,41 +761,41 @@ mod tests {
     #[test]
     fn test_decoding_int_as_float() {
         // large negative i64
-        assert_eq!(from_bytes::<f32>(b"\xc3\x0512345").unwrap(), 12345.);
+        assert_eq!(from_slice::<f32>(b"\xc3\x0512345").unwrap(), 12345.);
     }
 
     #[test]
     fn test_null() {
-        from_bytes::<()>(b"\x00").unwrap();
+        from_slice::<()>(b"\x00").unwrap();
     }
 
     #[test]
     fn test_option() {
-        assert_eq!(from_bytes::<Option<u64>>(b"\x00").unwrap(), None);
-        assert_eq!(from_bytes::<Option<Vec<u8>>>(b"\x00").unwrap(), None);
-        assert_eq!(from_bytes::<Option<u8>>(b"\x2342").unwrap(), Some(42));
+        assert_eq!(from_slice::<Option<u64>>(b"\x00").unwrap(), None);
+        assert_eq!(from_slice::<Option<Vec<u8>>>(b"\x00").unwrap(), None);
+        assert_eq!(from_slice::<Option<u8>>(b"\x2342").unwrap(), Some(42));
     }
 
     #[test]
     fn test_string_noescape() {
-        assert_eq!(from_bytes::<String>(b"\x57hello").unwrap(), "hello");
+        assert_eq!(from_slice::<String>(b"\x57hello").unwrap(), "hello");
     }
 
     #[test]
     fn test_string_json_escape() {
-        assert_eq!(from_bytes::<String>(b"\x28\\n").unwrap(), "\n");
+        assert_eq!(from_slice::<String>(b"\x28\\n").unwrap(), "\n");
     }
 
     #[test]
     #[cfg(feature = "serde_json5")]
     fn test_string_json5_escape() {
-        assert_eq!(from_bytes::<String>(b"\x49\\x0A").unwrap(), "\n");
+        assert_eq!(from_slice::<String>(b"\x49\\x0A").unwrap(), "\n");
     }
 
     #[test]
     fn test_tuple() {
         assert_eq!(
-            from_bytes::<(u8, i64, char)>(b"\x6b\x131\x132\x18x").unwrap(),
+            from_slice::<(u8, i64, char)>(b"\x6b\x131\x132\x18x").unwrap(),
             (1, 2, 'x')
         );
     }
@@ -881,16 +805,16 @@ mod tests {
         #[derive(Debug, PartialEq, serde_derive::Deserialize)]
         struct Test(Option<String>, bool, bool);
         assert_eq!(
-            from_bytes::<Test>(b"\x3b\x00\x01\x02").unwrap(),
+            from_slice::<Test>(b"\x3b\x00\x01\x02").unwrap(),
             Test(None, true, false)
         );
     }
 
     #[test]
     fn test_vec() {
-        assert_eq!(from_bytes::<Vec<()>>(b"\x0b").unwrap(), vec![]);
+        assert_eq!(from_slice::<Vec<()>>(b"\x0b").unwrap(), vec![]);
         assert_eq!(
-            from_bytes::<Vec<u8>>(b"\x4b\x131\x132").unwrap(),
+            from_slice::<Vec<u8>>(b"\x4b\x131\x132").unwrap(),
             vec![1, 2]
         );
     }
@@ -898,7 +822,7 @@ mod tests {
     #[test]
     fn test_vec_opts() {
         assert_eq!(
-            from_bytes::<Vec<Option<String>>>(b"\xbb\x471234\x00\x475678")
+            from_slice::<Vec<Option<String>>>(b"\xbb\x471234\x00\x475678")
                 .unwrap(),
             vec![Some("1234".to_string()), None, Some("5678".to_string())]
         );
@@ -912,7 +836,7 @@ mod tests {
     #[test]
     fn test_vec_of_vecs() {
         assert_eq!(
-            from_bytes::<Vec<Vec<i16>>>(
+            from_slice::<Vec<Vec<i16>>>(
                 b"\xcb\x0a\x4b\x131\x132\x4b\x133\x134"
             )
             .unwrap(),
@@ -924,7 +848,7 @@ mod tests {
     fn test_hashmap() {
         use std::collections::HashMap;
         let actual =
-            from_bytes::<HashMap<String, bool>>(b"\x6c\x17a\x02\x17b\x01")
+            from_slice::<HashMap<String, bool>>(b"\x6c\x17a\x02\x17b\x01")
                 .unwrap();
         let expected = [("a".into(), false), ("b".into(), true)]
             .into_iter()
@@ -939,7 +863,7 @@ mod tests {
             a: bool,
             b: bool,
         }
-        let actual = from_bytes::<Test>(b"\x6c\x17a\x02\x17b\x01").unwrap();
+        let actual = from_slice::<Test>(b"\x6c\x17a\x02\x17b\x01").unwrap();
         let expected = Test { a: false, b: true };
         assert_eq!(actual, expected);
     }
@@ -978,7 +902,7 @@ mod tests {
             X,
             Y,
         }
-        let actual: Vec<Test> = from_bytes(b"\x4b\x18X\x18Y").unwrap();
+        let actual: Vec<Test> = from_slice(b"\x4b\x18X\x18Y").unwrap();
         let expected = vec![Test::X, Test::Y];
         assert_eq!(actual, expected);
     }
@@ -991,7 +915,7 @@ mod tests {
             Y(bool),
         }
         // {"X": "Y"}
-        let actual: Test = from_bytes(b"\x4c\x18X\x18Y").unwrap();
+        let actual: Test = from_slice(b"\x4c\x18X\x18Y").unwrap();
         let expected = Test::X("Y".to_string());
         assert_eq!(actual, expected);
     }
@@ -1004,7 +928,7 @@ mod tests {
             Y(char),
         }
         assert_eq!(
-            from_bytes::<Vec<Test>>(b"\x9b\x8c\x18X\x18Y\x18Y\x18A")
+            from_slice::<Vec<Test>>(b"\x9b\x8c\x18X\x18Y\x18Y\x18A")
                 .unwrap_err()
                 .to_string(),
             Error::TrailingCharacters.to_string()
