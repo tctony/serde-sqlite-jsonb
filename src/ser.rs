@@ -35,7 +35,7 @@ impl<W: Write + Seek> Serializer<W> {
         .write_minimal(&mut self.writer)?;
         Ok(())
     }
-    fn write_displayable(
+    fn write_displayable_copy(
         &mut self,
         element_type: ElementType,
         data: impl std::fmt::Display,
@@ -50,7 +50,7 @@ impl<W: Write + Seek> Serializer<W> {
         self.writer.write_all(data.as_bytes())?;
         Ok(())
     }
-    fn write_displayable_nocopy(
+    fn write_displayable(
         &mut self,
         element_type: ElementType,
         data: impl std::fmt::Display,
