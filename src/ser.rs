@@ -3,76 +3,88 @@ use crate::{
     header::ElementType,
 };
 use serde::ser::{self, Serialize};
-use std::io::{Cursor, Seek, SeekFrom, Write};
+use std::io::Write;
 
-pub struct Serializer<W: Write + Seek> {
-    writer: W,
+#[derive(Debug, Default)]
+pub struct Serializer {
+    buffer: Vec<u8>,
 }
 
-impl<'a> Serializer<Cursor<&'a mut Vec<u8>>> {
-    pub fn from_bytes(vec: &'a mut Vec<u8>) -> Self {
-        let cursor = std::io::Cursor::new(vec);
-        Serializer { writer: cursor }
-    }
-}
-
+/// Serialize a value into a JSONB byte array
 pub fn to_vec<T>(value: &T) -> Result<Vec<u8>>
 where
     T: Serialize,
 {
-    let mut writer = Vec::new();
-    let mut serializer = Serializer::from_bytes(&mut writer);
+    let mut serializer = Serializer::default();
     value.serialize(&mut serializer)?;
-    Ok(writer)
+    Ok(serializer.buffer)
 }
 
-impl<W: Write + Seek> Serializer<W> {
+struct JsonbWriter<'a> {
+    pub buffer: &'a mut Vec<u8>,
+    header_start: usize,
+}
+
+impl<'a> JsonbWriter<'a> {
+    fn new(buffer: &'a mut Vec<u8>, element_type: ElementType) -> Self {
+        let header_start = buffer.len();
+        buffer.extend_from_slice(&[u8::from(element_type); 9]);
+        Self {
+            buffer,
+            header_start,
+        }
+    }
+    fn finalize(self) {
+        let data_start = self.header_start + 9;
+        let data_end = self.buffer.len();
+        let payload_size = data_end - data_start;
+        let header = &mut self.buffer[self.header_start..self.header_start + 9];
+        let head_len = if payload_size <= 11 {
+            header[0] |= (payload_size as u8) << 4;
+            1
+        } else if payload_size <= 0xff {
+            header[0] |= 0xc0;
+            header[1] = payload_size as u8;
+            2
+        } else if payload_size <= 0xffff {
+            header[0] |= 0xd0;
+            header[1..3].copy_from_slice(&(payload_size as u16).to_be_bytes());
+            3
+        } else if payload_size <= 0xffffff {
+            header[0] |= 0xe0;
+            header[1..5].copy_from_slice(&(payload_size as u32).to_be_bytes());
+            5
+        } else {
+            header[0] |= 0xf0;
+            header[1..9].copy_from_slice(&payload_size.to_be_bytes());
+            9
+        };
+        self.buffer
+            .copy_within(data_start..data_end, self.header_start + head_len);
+        self.buffer
+            .truncate(self.header_start + head_len + payload_size);
+    }
+}
+
+impl Serializer {
     fn write_header_nodata(&mut self, element_type: ElementType) -> Result<()> {
-        crate::header::Header {
-            element_type,
-            payload_size: 0,
-        }
-        .write_minimal(&mut self.writer)?;
+        self.buffer.push(u8::from(element_type));
         Ok(())
     }
-    fn write_displayable_copy(
-        &mut self,
-        element_type: ElementType,
-        data: impl std::fmt::Display,
-    ) -> Result<()> {
-        let data = data.to_string();
-        let payload_size = data.len();
-        crate::header::Header {
-            element_type,
-            payload_size,
-        }
-        .write_minimal(&mut self.writer)?;
-        self.writer.write_all(data.as_bytes())?;
-        Ok(())
-    }
+
     fn write_displayable(
         &mut self,
         element_type: ElementType,
         data: impl std::fmt::Display,
     ) -> Result<()> {
-        let header_bytes_max = crate::header::Header {
-            element_type,
-            payload_size: 0,
-        }
-        .serialize();
-        self.writer.write_all(&header_bytes_max)?;
-        let data_start = self.writer.stream_position()?;
-        write!(self.writer, "{}", data)?;
-        let data_end = self.writer.stream_position()?;
-        let payload_size = data_end - data_start;
-        self.writer.seek(SeekFrom::Start(data_start - 8))?;
-        self.writer.write_all(&payload_size.to_be_bytes())?;
-        self.writer.seek(SeekFrom::Start(data_end))?;
+        let mut w = JsonbWriter::new(&mut self.buffer, element_type);
+        write!(&mut w.buffer, "{}", data)?;
+        w.finalize();
         Ok(())
     }
 }
 
-impl<W: Write + Seek> ser::Serializer for &mut Serializer<W> {
+impl ser::Serializer for &mut Serializer {
     type Ok = ();
 
     type Error = Error;
@@ -160,10 +172,10 @@ impl<W: Write + Seek> ser::Serializer for &mut Serializer<W> {
         self.serialize_unit()
     }
 
-    fn serialize_some<T: ?Sized>(self, value: &T) -> Result<Self::Ok>
-    where
-        T: Serialize,
-    {
+    fn serialize_some<T: ?Sized + Serialize>(
+        self,
+        value: &T,
+    ) -> Result<Self::Ok> {
         T::serialize(value, self)
     }
 
@@ -184,27 +196,21 @@ impl<W: Write + Seek> ser::Serializer for &mut Serializer<W> {
         todo!()
     }
 
-    fn serialize_newtype_struct<T: ?Sized>(
+    fn serialize_newtype_struct<T: ?Sized + Serialize>(
         self,
         _name: &'static str,
         _value: &T,
-    ) -> Result<Self::Ok>
-    where
-        T: Serialize,
-    {
+    ) -> Result<Self::Ok> {
         todo!()
     }
 
-    fn serialize_newtype_variant<T: ?Sized>(
+    fn serialize_newtype_variant<T: ?Sized + Serialize>(
         self,
         _name: &'static str,
         _variant_index: u32,
         _variant: &'static str,
         _value: &T,
-    ) -> Result<Self::Ok>
-    where
-        T: Serialize,
-    {
+    ) -> Result<Self::Ok> {
         todo!()
     }
 
@@ -212,10 +218,7 @@ impl<W: Write + Seek> ser::Serializer for &mut Serializer<W> {
         todo!()
     }
 
-    fn serialize_tuple(
-        self,
-        _len: usize,
-    ) -> std::prelude::v1::Result<Self::SerializeTuple, Self::Error> {
+    fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple> {
         todo!()
     }
 
@@ -223,7 +226,7 @@ impl<W: Write + Seek> ser::Serializer for &mut Serializer<W> {
         self,
         _name: &'static str,
         _len: usize,
-    ) -> std::prelude::v1::Result<Self::SerializeTupleStruct, Self::Error> {
+    ) -> Result<Self::SerializeTupleStruct> {
         todo!()
     }
 
@@ -245,7 +248,7 @@ impl<W: Write + Seek> ser::Serializer for &mut Serializer<W> {
         self,
         _name: &'static str,
         len: usize,
-    ) -> std::prelude::v1::Result<Self::SerializeStruct, Self::Error> {
+    ) -> Result<Self::SerializeStruct> {
         self.serialize_map(Some(len))
     }
 
@@ -255,21 +258,20 @@ impl<W: Write + Seek> ser::Serializer for &mut Serializer<W> {
         _variant_index: u32,
         _variant: &'static str,
         _len: usize,
-    ) -> std::prelude::v1::Result<Self::SerializeStructVariant, Self::Error>
-    {
+    ) -> Result<Self::SerializeStructVariant> {
         todo!()
     }
 }
 
-impl<W: Write + Seek> ser::SerializeSeq for &mut Serializer<W> {
+impl ser::SerializeSeq for &mut Serializer {
     type Ok = ();
 
     type Error = Error;
 
-    fn serialize_element<T: ?Sized>(&mut self, value: &T) -> Result<()>
-    where
-        T: Serialize,
-    {
+    fn serialize_element<T: ?Sized + Serialize>(
+        &mut self,
+        value: &T,
+    ) -> Result<()> {
         value.serialize(&mut **self)
     }
 
@@ -278,18 +280,15 @@ impl<W: Write + Seek> ser::SerializeSeq for &mut Serializer<W> {
     }
 }
 
-impl<W: Write + Seek> ser::SerializeTuple for &mut Serializer<W> {
+impl ser::SerializeTuple for &mut Serializer {
     type Ok = ();
 
     type Error = Error;
 
-    fn serialize_element<T: ?Sized>(
+    fn serialize_element<T: ?Sized + Serialize>(
         &mut self,
         _value: &T,
-    ) -> std::prelude::v1::Result<(), Self::Error>
-    where
-        T: Serialize,
-    {
+    ) -> std::prelude::v1::Result<(), Self::Error> {
         todo!()
     }
 
@@ -298,18 +297,15 @@ impl<W: Write + Seek> ser::SerializeTuple for &mut Serializer<W> {
     }
 }
 
-impl<W: Write + Seek> ser::SerializeTupleStruct for &mut Serializer<W> {
+impl ser::SerializeTupleStruct for &mut Serializer {
     type Ok = ();
 
     type Error = Error;
 
-    fn serialize_field<T: ?Sized>(
+    fn serialize_field<T: ?Sized + Serialize>(
         &mut self,
         _value: &T,
-    ) -> std::prelude::v1::Result<(), Self::Error>
-    where
-        T: Serialize,
-    {
+    ) -> std::prelude::v1::Result<(), Self::Error> {
         todo!()
     }
 
@@ -318,15 +314,15 @@ impl<W: Write + Seek> ser::SerializeTupleStruct for &mut Serializer<W> {
     }
 }
 
-impl<W: Write + Seek> ser::SerializeTupleVariant for &mut Serializer<W> {
+impl ser::SerializeTupleVariant for &mut Serializer {
     type Ok = ();
 
     type Error = Error;
 
-    fn serialize_field<T: ?Sized>(&mut self, value: &T) -> Result<()>
-    where
-        T: Serialize,
-    {
+    fn serialize_field<T: ?Sized + Serialize>(
+        &mut self,
+        value: &T,
+    ) -> Result<()> {
         value.serialize(&mut **self)
     }
 
@@ -335,28 +331,22 @@ impl<W: Write + Seek> ser::SerializeTupleVariant for &mut Serializer<W> {
     }
 }
 
-impl<W: Write + Seek> ser::SerializeMap for &mut Serializer<W> {
+impl ser::SerializeMap for &mut Serializer {
     type Ok = ();
 
     type Error = Error;
 
-    fn serialize_key<T: ?Sized>(
+    fn serialize_key<T: ?Sized + Serialize>(
         &mut self,
         _key: &T,
-    ) -> std::prelude::v1::Result<(), Self::Error>
-    where
-        T: Serialize,
-    {
+    ) -> std::prelude::v1::Result<(), Self::Error> {
         todo!()
     }
 
-    fn serialize_value<T: ?Sized>(
+    fn serialize_value<T: ?Sized + Serialize>(
         &mut self,
         _value: &T,
-    ) -> std::prelude::v1::Result<(), Self::Error>
-    where
-        T: Serialize,
-    {
+    ) -> std::prelude::v1::Result<(), Self::Error> {
         todo!()
     }
 
@@ -365,19 +355,16 @@ impl<W: Write + Seek> ser::SerializeMap for &mut Serializer<W> {
     }
 }
 
-impl<W: Write + Seek> ser::SerializeStruct for &mut Serializer<W> {
+impl ser::SerializeStruct for &mut Serializer {
     type Ok = ();
 
     type Error = Error;
 
-    fn serialize_field<T: ?Sized>(
+    fn serialize_field<T: ?Sized + Serialize>(
         &mut self,
         _key: &'static str,
         _value: &T,
-    ) -> Result<()>
-    where
-        T: Serialize,
-    {
+    ) -> Result<()> {
         todo!()
     }
 
@@ -386,19 +373,16 @@ impl<W: Write + Seek> ser::SerializeStruct for &mut Serializer<W> {
     }
 }
 
-impl<W: Write + Seek> ser::SerializeStructVariant for &mut Serializer<W> {
+impl ser::SerializeStructVariant for &mut Serializer {
     type Ok = ();
 
     type Error = Error;
 
-    fn serialize_field<T: ?Sized>(
+    fn serialize_field<T: ?Sized + Serialize>(
         &mut self,
         _key: &'static str,
         _value: &T,
-    ) -> Result<()>
-    where
-        T: Serialize,
-    {
+    ) -> Result<()> {
         todo!()
     }
 
@@ -413,11 +397,17 @@ mod tests {
 
     #[test]
     fn test_serialize_u8() {
-        assert_eq!(to_vec(&42u8).unwrap(), b"\xf3\0\0\0\0\0\0\0\x0242");
+        assert_eq!(to_vec(&42u8).unwrap(), b"\x2342");
     }
 
     #[test]
     fn test_serialize_i64() {
-        assert_eq!(to_vec(&42i64).unwrap(), b"\xf3\0\0\0\0\0\0\0\x0242");
+        assert_eq!(to_vec(&42i64).unwrap(), b"\x2342");
+    }
+
+    #[test]
+    fn test_serialize_bool() {
+        assert_eq!(to_vec(&true).unwrap(), b"\x01");
+        assert_eq!(to_vec(&false).unwrap(), b"\x02");
     }
 }

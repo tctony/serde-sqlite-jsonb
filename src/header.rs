@@ -52,32 +52,6 @@ impl Header {
         s[1..].copy_from_slice(&payload_size);
         s
     }
-
-    /// Serialize a header into its shortest possible form
-    pub fn write_minimal<W: std::io::Write>(
-        self,
-        mut w: W,
-    ) -> std::io::Result<()> {
-        let payload_size = self.payload_size;
-        let b = self.element_type as u8;
-        if payload_size <= 11 {
-            w.write_all(&[((payload_size as u8) << 4) | b])
-        } else if payload_size <= 0xff {
-            w.write_all(&[0xc0 | b, payload_size as u8])
-        } else if payload_size <= 0xffff {
-            let mut header = [0xd0 | b; 3];
-            header[1..3].copy_from_slice(&(payload_size as u16).to_be_bytes());
-            w.write_all(&header)
-        } else if payload_size <= 0xffffff {
-            let mut header = [0xe0 | b; 5];
-            header[1..5].copy_from_slice(&(payload_size as u32).to_be_bytes());
-            w.write_all(&header)
-        } else {
-            let mut header = [0xf0 | b; 9];
-            header[1..9].copy_from_slice(&payload_size.to_be_bytes());
-            w.write_all(&header)
-        }
-    }
 }
 
 impl std::convert::From<u8> for ElementType {
