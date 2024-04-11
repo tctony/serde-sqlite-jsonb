@@ -2,6 +2,9 @@
 
 This crate provides a custom Serde deserializer for SQLite JSONB columns.
 
+It was initially developed for inclusion in the
+[SQLPage](https://github.com/lovasoa/SQLpage) website builder.
+
 ## Crate features
 
 The binary format can contain raw json data, so this crate depends on the `serde_json` crate to parse the JSON data.
