@@ -102,9 +102,9 @@ impl<'a> ser::Serializer for &'a mut Serializer {
 
     type SerializeTupleVariant = Self;
 
-    type SerializeMap = Self;
+    type SerializeMap = JsonbWriter<'a>;
 
-    type SerializeStruct = Self;
+    type SerializeStruct = JsonbWriter<'a>;
 
     type SerializeStructVariant = Self;
 
@@ -246,7 +246,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     }
 
     fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap> {
-        todo!()
+        Ok(JsonbWriter::new(&mut self.buffer, ElementType::Object))
     }
 
     fn serialize_struct(
@@ -341,45 +341,43 @@ impl ser::SerializeTupleVariant for &mut Serializer {
     }
 }
 
-impl ser::SerializeMap for &mut Serializer {
+impl<'a> ser::SerializeMap for JsonbWriter<'a> {
     type Ok = ();
 
     type Error = Error;
 
-    fn serialize_key<T: ?Sized + Serialize>(
-        &mut self,
-        _key: &T,
-    ) -> std::prelude::v1::Result<(), Self::Error> {
-        todo!()
+    fn serialize_key<T: ?Sized + Serialize>(&mut self, key: &T) -> Result<()> {
+        <Self as ser::SerializeSeq>::serialize_element(self, key)
     }
 
     fn serialize_value<T: ?Sized + Serialize>(
         &mut self,
-        _value: &T,
-    ) -> std::prelude::v1::Result<(), Self::Error> {
-        todo!()
+        value: &T,
+    ) -> Result<()> {
+        <Self as ser::SerializeSeq>::serialize_element(self, value)
     }
 
     fn end(self) -> Result<Self::Ok> {
-        todo!()
+        Ok(self.finalize())
     }
 }
 
-impl ser::SerializeStruct for &mut Serializer {
+impl<'a> ser::SerializeStruct for JsonbWriter<'a> {
     type Ok = ();
 
     type Error = Error;
 
     fn serialize_field<T: ?Sized + Serialize>(
         &mut self,
-        _key: &'static str,
-        _value: &T,
+        key: &'static str,
+        value: &T,
     ) -> Result<()> {
-        todo!()
+        <Self as ser::SerializeMap>::serialize_key(self, key)?;
+        <Self as ser::SerializeMap>::serialize_value(self, value)
     }
 
     fn end(self) -> Result<Self::Ok> {
-        todo!()
+        Ok(self.finalize())
     }
 }
 
@@ -468,12 +466,42 @@ mod tests {
 
     #[test]
     fn test_serialize_tuple_struct() {
-        use serde_derive::Serialize;
-        #[derive(Serialize)]
+        #[derive(serde_derive::Serialize)]
         struct TupleStruct(String, f32);
+
         assert_eq!(
             to_vec(&TupleStruct("hello".to_string(), 3.14)).unwrap(),
             b"\xbb\x5ahello\x453.14"
         );
+    }
+
+    #[test]
+    fn test_serialize_struct() {
+        #[derive(serde_derive::Serialize)]
+        struct TestStruct {
+            smol: char,
+            long_long_long_long: usize,
+        }
+        let test_struct = TestStruct {
+            smol: 'X',
+            long_long_long_long: 42,
+        };
+        assert_eq!(
+            to_vec(&test_struct).unwrap(),
+            b"\xcc\x1f\x4asmol\x1aX\xca\x13long_long_long_long\x2342"
+        );
+    }
+
+    #[test]
+    fn test_serialize_map() {
+        let mut test_map = std::collections::HashMap::new();
+        test_map.insert("k".to_string(), false);
+        assert_eq!(to_vec(&test_map).unwrap(), b"\x3c\x1ak\x02",);
+    }
+
+    #[test]
+    fn test_serialize_empty_map() {
+        let test_map = std::collections::HashMap::<String, ()>::new();
+        assert_eq!(to_vec(&test_map).unwrap(), b"\x0c",);
     }
 }
