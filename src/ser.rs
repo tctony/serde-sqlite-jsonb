@@ -51,7 +51,7 @@ impl<'a> JsonbWriter<'a> {
             header[0] |= 0xd0;
             header[1..3].copy_from_slice(&(payload_size as u16).to_be_bytes());
             3
-        } else if payload_size <= 0xffffff {
+        } else if payload_size <= 0xffffffff {
             header[0] |= 0xe0;
             header[1..5].copy_from_slice(&(payload_size as u32).to_be_bytes());
             5
@@ -60,10 +60,14 @@ impl<'a> JsonbWriter<'a> {
             header[1..9].copy_from_slice(&payload_size.to_be_bytes());
             9
         };
-        self.buffer
-            .copy_within(data_start..data_end, self.header_start + head_len);
-        self.buffer
-            .truncate(self.header_start + head_len + payload_size);
+        if head_len < 9 {
+            self.buffer.copy_within(
+                data_start..data_end,
+                self.header_start + head_len,
+            );
+            self.buffer
+                .truncate(self.header_start + head_len + payload_size);
+        }
     }
 }
 
@@ -94,7 +98,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
 
     type SerializeTuple = JsonbWriter<'a>;
 
-    type SerializeTupleStruct = Self;
+    type SerializeTupleStruct = JsonbWriter<'a>;
 
     type SerializeTupleVariant = Self;
 
@@ -185,7 +189,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     }
 
     fn serialize_unit_struct(self, _name: &'static str) -> Result<Self::Ok> {
-        todo!()
+        self.serialize_unit()
     }
 
     fn serialize_unit_variant(
@@ -194,7 +198,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         _variant_index: u32,
         _variant: &'static str,
     ) -> Result<Self::Ok> {
-        todo!()
+        self.serialize_unit()
     }
 
     fn serialize_newtype_struct<T: ?Sized + Serialize>(
@@ -202,7 +206,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         _name: &'static str,
         _value: &T,
     ) -> Result<Self::Ok> {
-        todo!()
+        self.serialize_unit()
     }
 
     fn serialize_newtype_variant<T: ?Sized + Serialize>(
@@ -210,9 +214,9 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         _name: &'static str,
         _variant_index: u32,
         _variant: &'static str,
-        _value: &T,
+        value: &T,
     ) -> Result<Self::Ok> {
-        todo!()
+        T::serialize(value, self)
     }
 
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq> {
@@ -226,9 +230,9 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     fn serialize_tuple_struct(
         self,
         _name: &'static str,
-        _len: usize,
+        len: usize,
     ) -> Result<Self::SerializeTupleStruct> {
-        todo!()
+        self.serialize_tuple(len)
     }
 
     fn serialize_tuple_variant(
@@ -303,20 +307,20 @@ impl<'a> ser::SerializeTuple for JsonbWriter<'a> {
     }
 }
 
-impl ser::SerializeTupleStruct for &mut Serializer {
+impl<'a> ser::SerializeTupleStruct for JsonbWriter<'a> {
     type Ok = ();
 
     type Error = Error;
 
     fn serialize_field<T: ?Sized + Serialize>(
         &mut self,
-        _value: &T,
+        value: &T,
     ) -> std::prelude::v1::Result<(), Self::Error> {
-        todo!()
+        <Self as ser::SerializeTuple>::serialize_element(self, value)
     }
 
     fn end(self) -> Result<Self::Ok> {
-        todo!()
+        <Self as ser::SerializeTuple>::end(self)
     }
 }
 
@@ -421,6 +425,33 @@ mod tests {
     }
 
     #[test]
+    fn test_serialize_sring() {
+        assert_eq!(to_vec(&"hello").unwrap(), b"\x5ahello");
+    }
+
+    fn assert_long_str(repeats: usize, expected_header: &[u8]) {
+        let long_str = "x".repeat(repeats);
+        assert_eq!(
+            to_vec(&long_str).unwrap(),
+            [&expected_header[..], &long_str.as_bytes()].concat()
+        );
+    }
+
+    #[test]
+    fn test_serialize_various_string_lengths() {
+        assert_long_str(0x0, b"\x0a");
+        assert_long_str(0x1, b"\x1a");
+        assert_long_str(0xb, b"\xba");
+        assert_long_str(0xc, b"\xca\x0c");
+        assert_long_str(0xf, b"\xca\x0f");
+        assert_long_str(0x100, b"\xda\x01\x00");
+        assert_long_str(0xffff, b"\xda\xff\xff");
+        assert_long_str(0x01_23_45_67, b"\xea\x01\x23\x45\x67");
+        // disabled for test performance:
+        // assert_long_str(0x01_0000_0000, b"\xfa\x00\x00\x00\x01\x00\x00\x00\x00");
+    }
+
+    #[test]
     fn test_serialize_array() {
         assert_eq!(
             to_vec(&Vec::<String>::new()).unwrap(),
@@ -433,5 +464,16 @@ mod tests {
     #[test]
     fn test_serialize_tuple() {
         assert_eq!(to_vec(&(true, 1, 2)).unwrap(), b"\x5b\x01\x131\x132");
+    }
+
+    #[test]
+    fn test_serialize_tuple_struct() {
+        use serde_derive::Serialize;
+        #[derive(Serialize)]
+        struct TupleStruct(String, f32);
+        assert_eq!(
+            to_vec(&TupleStruct("hello".to_string(), 3.14)).unwrap(),
+            b"\xbb\x5ahello\x453.14"
+        );
     }
 }
