@@ -1,15 +1,26 @@
 use std::collections::HashMap;
 
 use rusqlite::{Connection, DatabaseName};
-use serde_derive::Deserialize;
+use serde_derive::{Deserialize, Serialize};
 
-#[derive(Debug, PartialEq, Deserialize)]
+#[derive(Debug, PartialEq, Deserialize, Serialize)]
 struct Person {
     id: i32,
     name: String,
-    phone_numbers: Vec<Option<String>>,
+    phone_numbers: Vec<PhoneNumber>,
     is_champion: bool,
     data: Vec<u8>,
+}
+
+#[derive(Debug, PartialEq, Deserialize, Serialize)]
+enum PhoneNumber {
+    Internal(i32),
+    National(String),
+    International {
+        country_code: Option<i32>,
+        number: String,
+    },
+    Custom(Option<i32>, String),
 }
 
 #[test]
@@ -19,7 +30,7 @@ fn test_fetch_json_object() -> rusqlite::Result<()> {
         r#"select jsonb('{
         "id": 1,
         "name": "John Doe",
-        "phone_numbers": ["1234", null, "567"],
+        "phone_numbers": [{"National": "1234"}],
         "is_champion": true,
         "data": [1, 2, 3]
     }')"#,
@@ -32,11 +43,7 @@ fn test_fetch_json_object() -> rusqlite::Result<()> {
         Person {
             id: 1,
             name: "John Doe".to_string(),
-            phone_numbers: vec![
-                Some("1234".to_string()),
-                None,
-                Some("567".to_string())
-            ],
+            phone_numbers: vec![PhoneNumber::National("1234".to_string())],
             is_champion: true,
             data: vec![1, 2, 3]
         }
@@ -72,4 +79,55 @@ fn test_large_object_as_blob() -> rusqlite::Result<()> {
             .collect()
     );
     Ok(())
+}
+
+#[test]
+fn test_roadtrip() {
+    // Let's go on a roadtrip. We'll
+    // - first serialize an object to jsonb in rust,
+    // - then decode it as json in sqlite,
+    // - then encode it back to jsonb in sqlite,
+    // - and finally decode it back to an object in rust.
+    let my_obj: Vec<Person> = vec![
+        Person {
+            id: 1,
+            name: "John Doe".to_string(),
+            phone_numbers: vec![
+                PhoneNumber::International {
+                    country_code: Some(33),
+                    number: "1234".to_string(),
+                },
+                PhoneNumber::Custom(None, "5678".to_string()),
+            ],
+            is_champion: true,
+            data: vec![1, 2, 3],
+        },
+        Person {
+            id: 2,
+            name: "Mister Smiley Baily 😊".to_string(),
+            phone_numbers: vec![],
+            is_champion: false,
+            data: (0..u8::MAX).collect(),
+        },
+    ];
+    let encoded = serde_sqlite_jsonb::to_vec(&my_obj).unwrap();
+    // start of the trip check: we can go back to the original object
+    assert_eq!(
+        my_obj,
+        serde_sqlite_jsonb::from_slice::<Vec<Person>>(&encoded).unwrap(),
+        "we can decode what we encoded"
+    );
+    // now we go to sqlite
+    let conn = Connection::open_in_memory().unwrap();
+    let went_through: Vec<u8> = conn
+        .query_row(
+            "SELECT jsonb(json(?))", // convert jsonb to json and back to jsonb
+            [&encoded],
+            |row| row.get(0),
+        )
+        .unwrap();
+    // now we go back to rust
+    let decoded: Vec<Person> =
+        serde_sqlite_jsonb::from_slice(&went_through).unwrap();
+    assert_eq!(my_obj, decoded, "went through sqlite and back");
 }
