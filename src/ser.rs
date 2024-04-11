@@ -100,13 +100,13 @@ impl<'a> ser::Serializer for &'a mut Serializer {
 
     type SerializeTupleStruct = JsonbWriter<'a>;
 
-    type SerializeTupleVariant = Self;
+    type SerializeTupleVariant = TupleVariantSerializer<'a>;
 
     type SerializeMap = JsonbWriter<'a>;
 
     type SerializeStruct = JsonbWriter<'a>;
 
-    type SerializeStructVariant = Self;
+    type SerializeStructVariant = JsonbWriter<'a>;
 
     fn serialize_bool(self, v: bool) -> Result<Self::Ok> {
         self.write_header_nodata(if v {
@@ -196,9 +196,9 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         self,
         _name: &'static str,
         _variant_index: u32,
-        _variant: &'static str,
+        variant: &'static str,
     ) -> Result<Self::Ok> {
-        self.serialize_unit()
+        self.serialize_str(variant)
     }
 
     fn serialize_newtype_struct<T: ?Sized + Serialize>(
@@ -213,10 +213,13 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         self,
         _name: &'static str,
         _variant_index: u32,
-        _variant: &'static str,
+        variant: &'static str,
         value: &T,
     ) -> Result<Self::Ok> {
-        T::serialize(value, self)
+        let mut map = self.serialize_map(Some(1))?;
+        serde::ser::SerializeMap::serialize_key(&mut map, variant)?;
+        serde::ser::SerializeMap::serialize_value(&mut map, value)?;
+        serde::ser::SerializeMap::end(map)
     }
 
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq> {
@@ -239,10 +242,10 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         self,
         _name: &'static str,
         _variant_index: u32,
-        _variant: &'static str,
+        variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeTupleVariant> {
-        todo!()
+        Ok(TupleVariantSerializer::new(&mut self.buffer, variant))
     }
 
     fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap> {
@@ -324,7 +327,31 @@ impl<'a> ser::SerializeTupleStruct for JsonbWriter<'a> {
     }
 }
 
-impl ser::SerializeTupleVariant for &mut Serializer {
+/// Serializes an enum tuple variant as an object with a single key for the variant name
+/// and an array of the tuple fields as the value.
+/// MyEnum::Variant(1, 2) -> {"Variant": [1, 2]}
+/// We need to keep track of two jsonb headers, one for the map and one for the array.
+pub struct TupleVariantSerializer<'a> {
+    map_header_start: usize,
+    seq_jsonb_writer: JsonbWriter<'a>,
+}
+
+impl<'a> TupleVariantSerializer<'a> {
+    fn new(buffer: &'a mut Vec<u8>, variant: &'static str) -> Self {
+        let mut map_jsonb_writer =
+            JsonbWriter::new(buffer, ElementType::Object);
+        ser::SerializeMap::serialize_key(&mut map_jsonb_writer, variant)
+            .unwrap();
+        let map_header_start = map_jsonb_writer.header_start;
+        let seq_jsonb_writer = JsonbWriter::new(buffer, ElementType::Array);
+        Self {
+            map_header_start,
+            seq_jsonb_writer,
+        }
+    }
+}
+
+impl<'a> ser::SerializeTupleVariant for TupleVariantSerializer<'a> {
     type Ok = ();
 
     type Error = Error;
@@ -333,11 +360,21 @@ impl ser::SerializeTupleVariant for &mut Serializer {
         &mut self,
         value: &T,
     ) -> Result<()> {
-        value.serialize(&mut **self)
+        ser::SerializeTuple::serialize_element(
+            &mut self.seq_jsonb_writer,
+            value,
+        )
     }
 
     fn end(self) -> Result<Self::Ok> {
-        Ok(())
+        ser::SerializeTuple::end(JsonbWriter {
+            buffer: self.seq_jsonb_writer.buffer,
+            header_start: self.seq_jsonb_writer.header_start,
+        })?;
+        ser::SerializeMap::end(JsonbWriter {
+            buffer: self.seq_jsonb_writer.buffer,
+            header_start: self.map_header_start,
+        })
     }
 }
 
@@ -381,21 +418,21 @@ impl<'a> ser::SerializeStruct for JsonbWriter<'a> {
     }
 }
 
-impl ser::SerializeStructVariant for &mut Serializer {
+impl<'a> ser::SerializeStructVariant for JsonbWriter<'a> {
     type Ok = ();
 
     type Error = Error;
 
     fn serialize_field<T: ?Sized + Serialize>(
         &mut self,
-        _key: &'static str,
-        _value: &T,
+        key: &'static str,
+        value: &T,
     ) -> Result<()> {
-        todo!()
+        <Self as ser::SerializeStruct>::serialize_field(self, key, value)
     }
 
     fn end(self) -> Result<Self::Ok> {
-        todo!()
+        <Self as ser::SerializeStruct>::end(self)
     }
 }
 
@@ -503,5 +540,56 @@ mod tests {
     fn test_serialize_empty_map() {
         let test_map = std::collections::HashMap::<String, ()>::new();
         assert_eq!(to_vec(&test_map).unwrap(), b"\x0c",);
+    }
+
+    #[test]
+    fn test_serialize_option() {
+        assert_eq!(to_vec(&Some(42)).unwrap(), b"\x2342");
+        assert_eq!(to_vec(&Option::<i32>::None).unwrap(), b"\x00");
+    }
+
+    #[test]
+    fn test_serialize_unit() {
+        assert_eq!(to_vec(&()).unwrap(), b"\x00");
+    }
+
+    #[test]
+    fn test_serialize_unit_struct() {
+        #[derive(serde_derive::Serialize)]
+        struct UnitStruct;
+
+        assert_eq!(to_vec(&UnitStruct).unwrap(), b"\x00");
+    }
+
+    #[test]
+    fn test_serialize_enum_unit_variants() {
+        #[derive(serde_derive::Serialize)]
+        enum Enum {
+            A,
+            B,
+        }
+
+        assert_eq!(to_vec(&Enum::A).unwrap(), b"\x1aA");
+        assert_eq!(to_vec(&Enum::B).unwrap(), b"\x1aB");
+    }
+
+    #[test]
+    fn test_serialize_enum_newtype_variant() {
+        #[derive(serde_derive::Serialize)]
+        enum Enum {
+            A(i32),
+        }
+
+        assert_eq!(to_vec(&Enum::A(42)).unwrap(), b"\x5c\x1aA\x2342");
+    }
+
+    #[test]
+    fn test_serialize_enum_tuple_variant() {
+        #[derive(serde_derive::Serialize)]
+        enum Enum {
+            A(i32, i32),
+        }
+
+        assert_eq!(to_vec(&Enum::A(1, 2)).unwrap(), b"\x7c\x1aA\x4b\x131\x132");
     }
 }
