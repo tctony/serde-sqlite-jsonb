@@ -20,8 +20,9 @@ where
     Ok(serializer.buffer)
 }
 
-struct JsonbWriter<'a> {
-    pub buffer: &'a mut Vec<u8>,
+/// Helper struct to write JSONB data, then finalize the header to its minimal size
+pub struct JsonbWriter<'a> {
+    buffer: &'a mut Vec<u8>,
     header_start: usize,
 }
 
@@ -84,14 +85,14 @@ impl Serializer {
     }
 }
 
-impl ser::Serializer for &mut Serializer {
+impl<'a> ser::Serializer for &'a mut Serializer {
     type Ok = ();
 
     type Error = Error;
 
-    type SerializeSeq = Self;
+    type SerializeSeq = JsonbWriter<'a>;
 
-    type SerializeTuple = Self;
+    type SerializeTuple = JsonbWriter<'a>;
 
     type SerializeTupleStruct = Self;
 
@@ -215,11 +216,11 @@ impl ser::Serializer for &mut Serializer {
     }
 
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq> {
-        todo!()
+        Ok(JsonbWriter::new(&mut self.buffer, ElementType::Array))
     }
 
     fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple> {
-        todo!()
+        Ok(JsonbWriter::new(&mut self.buffer, ElementType::Array))
     }
 
     fn serialize_tuple_struct(
@@ -263,7 +264,7 @@ impl ser::Serializer for &mut Serializer {
     }
 }
 
-impl ser::SerializeSeq for &mut Serializer {
+impl<'a> ser::SerializeSeq for JsonbWriter<'a> {
     type Ok = ();
 
     type Error = Error;
@@ -272,28 +273,33 @@ impl ser::SerializeSeq for &mut Serializer {
         &mut self,
         value: &T,
     ) -> Result<()> {
-        value.serialize(&mut **self)
+        let mut serializer = Serializer::default();
+        std::mem::swap(self.buffer, &mut serializer.buffer);
+        let r = value.serialize(&mut serializer);
+        std::mem::swap(self.buffer, &mut serializer.buffer);
+        r
     }
 
     fn end(self) -> Result<Self::Ok> {
-        todo!()
+        self.finalize();
+        Ok(())
     }
 }
 
-impl ser::SerializeTuple for &mut Serializer {
+impl<'a> ser::SerializeTuple for JsonbWriter<'a> {
     type Ok = ();
 
     type Error = Error;
 
     fn serialize_element<T: ?Sized + Serialize>(
         &mut self,
-        _value: &T,
-    ) -> std::prelude::v1::Result<(), Self::Error> {
-        todo!()
+        value: &T,
+    ) -> Result<()> {
+        <Self as ser::SerializeSeq>::serialize_element(self, value)
     }
 
     fn end(self) -> Result<Self::Ok> {
-        todo!()
+        <Self as ser::SerializeSeq>::end(self)
     }
 }
 
@@ -402,12 +408,30 @@ mod tests {
 
     #[test]
     fn test_serialize_i64() {
-        assert_eq!(to_vec(&42i64).unwrap(), b"\x2342");
+        assert_eq!(
+            to_vec(&1234567890123456789i64).unwrap(),
+            b"\xc3\x131234567890123456789"
+        );
     }
 
     #[test]
     fn test_serialize_bool() {
         assert_eq!(to_vec(&true).unwrap(), b"\x01");
         assert_eq!(to_vec(&false).unwrap(), b"\x02");
+    }
+
+    #[test]
+    fn test_serialize_array() {
+        assert_eq!(
+            to_vec(&Vec::<String>::new()).unwrap(),
+            b"\x0b",
+            "empty array"
+        );
+        assert_eq!(to_vec(&vec![true, false]).unwrap(), b"\x2b\x01\x02");
+    }
+
+    #[test]
+    fn test_serialize_tuple() {
+        assert_eq!(to_vec(&(true, 1, 2)).unwrap(), b"\x5b\x01\x131\x132");
     }
 }
