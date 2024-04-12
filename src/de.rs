@@ -108,10 +108,11 @@ impl<R: Read> Deserializer<R> {
         })
     }
 
-    fn read_payload(&mut self, header: Header) -> Result<Vec<u8>> {
-        let mut buf = vec![0; header.payload_size];
-        self.reader.read_exact(&mut buf)?;
-        Ok(buf)
+    fn read_payload_string(&mut self, header: Header) -> Result<String> {
+        let mut str = String::with_capacity(header.payload_size);
+        let read = self.reader_with_limit(header)?.read_to_string(&mut str)?;
+        assert_eq!(read, header.payload_size);
+        Ok(str)
     }
 
     fn drop_payload(&mut self, header: Header) -> Result<ElementType> {
@@ -152,8 +153,16 @@ impl<R: Read> Deserializer<R> {
     where
         for<'a> T: Deserialize<'a>,
     {
-        let mut reader = self.reader_with_limit(header)?;
-        Ok(crate::json::parse_json(&mut reader)?)
+        if header.payload_size <= 8 {
+            // micro-optimization: read small payloads into a stack buffer
+            let mut buf = [0u8; 8];
+            let smallbuf = &mut buf[..header.payload_size];
+            self.reader.read_exact(smallbuf)?;
+            Ok(crate::json::parse_json_slice(smallbuf)?)
+        } else {
+            let mut reader = self.reader_with_limit(header)?;
+            Ok(crate::json::parse_json(&mut reader)?)
+        }
     }
 
     fn read_json5_compatible<T>(&mut self, header: Header) -> Result<T>
@@ -194,7 +203,7 @@ impl<R: Read> Deserializer<R> {
     fn read_string(&mut self, header: Header) -> Result<String> {
         match header.element_type {
             ElementType::Text | ElementType::TextRaw => {
-                Ok(String::from_utf8(self.read_payload(header)?)?)
+                self.read_payload_string(header)
             }
             ElementType::TextJ => self.read_json_compatible_string(header),
             ElementType::Text5 => self.read_json5_compatible_string(header),

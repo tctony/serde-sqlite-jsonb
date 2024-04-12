@@ -1,10 +1,14 @@
 #[cfg(feature = "serde_json")]
 pub(crate) use serde_json::from_reader as parse_json;
 #[cfg(feature = "serde_json")]
+pub(crate) use serde_json::from_slice as parse_json_slice;
+#[cfg(feature = "serde_json")]
 pub(crate) type JsonError = serde_json::Error;
 
 #[cfg(not(feature = "serde_json"))]
 pub(crate) use serde_json5::from_reader as parse_json;
+#[cfg(not(feature = "serde_json"))]
+pub(crate) use serde_json5::from_slice as parse_json_slice;
 #[cfg(not(feature = "serde_json"))]
 pub(crate) type JsonError = serde_json5::Error;
 
