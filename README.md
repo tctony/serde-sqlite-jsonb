@@ -5,6 +5,46 @@ This crate provides a custom Serde deserializer for SQLite JSONB columns.
 It was initially developed for inclusion in the
 [SQLPage](https://github.com/lovasoa/SQLpage) website builder.
 
+## Why
+
+Since version 3.45.0, SQLite supports JSONB columns,
+which can store JSON data in a binary format that is more efficient
+to manipulate than JSON.
+
+The problem is that applications that use SQLite currently need
+to convert the data from JSONB to JSON, and then from JSON to their
+own data structures to use it.
+This prevents reading the blob data directly from the
+database in a streaming fashion using SQLite's blob streaming API,
+and requires making a SQL query to extract and convert the data to JSON.
+
+This crate provides a custom Serde serializer and deserializer
+for JSONB directly, which allows skipping the JSON conversion step.
+
+This can lead to significant performance improvements in certain scenarios,
+as demonstrated in this crate's benchmarks.
+
+### Benchmarks
+
+These graphs show the time taken:
+ - deserializing a JSONB column directly to a struct using this crate
+ - making a SQL query to extract the JSONB column as JSON and then deserializing it to a struct using serde_json.
+
+The data being deserialized contains a string, the length of which varies from 50 to 1000 characters, to demonstrate the evolution of the performance with the size of the data.
+
+<center>
+
+![Benchmark results](./benches/lines.svg)
+![Benchmark results](./benches/violin.svg)
+
+</center>
+
+> *Disclaimer*: These benchmarks should always be taken with a grain of salt.
+> When performance matters, you should measure the performance
+> inside your own application with your own data.
+> `serde_json` is very well optimized and can be faster than this crate
+> in some scenarios, especially when the JSON data is small.
+
 ## Crate features
 
 The binary format can contain raw json data, so this crate depends on the `serde_json` crate to parse the JSON data.
