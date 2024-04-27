@@ -9,6 +9,7 @@
 use crate::error::{Error, Result};
 use crate::header::{ElementType, Header};
 use serde::de::{self, Deserialize, IntoDeserializer, SeqAccess, Visitor};
+use std::convert::Infallible;
 use std::io::Read;
 
 /// A structure that deserializes SQLite JSONB data into Rust values.
@@ -94,13 +95,13 @@ impl<R: Read> Deserializer<R> {
             15 => 8,
             n => unreachable!("{n} does not fit in four bits"),
         };
-        let payload_size: usize = if bytes_to_read == 0 {
-            usize::from(upper_four_bits)
+        let payload_size: u64 = if bytes_to_read == 0 {
+            u64::from(upper_four_bits)
         } else {
             let mut buf = [0u8; 8];
             let start = 8 - bytes_to_read;
             self.reader.read_exact(&mut buf[start..8])?;
-            usize::from_be_bytes(buf)
+            u64::from_be_bytes(buf)
         };
         Ok(Header {
             element_type: ElementType::from(first_byte),
@@ -109,9 +110,9 @@ impl<R: Read> Deserializer<R> {
     }
 
     fn read_payload_string(&mut self, header: Header) -> Result<String> {
-        let mut str = String::with_capacity(header.payload_size);
+        let mut str = String::with_capacity(header.payload_size as usize);
         let read = self.reader_with_limit(header)?.read_to_string(&mut str)?;
-        assert_eq!(read, header.payload_size);
+        assert_eq!(read, header.payload_size as usize);
         Ok(str)
     }
 
@@ -119,9 +120,9 @@ impl<R: Read> Deserializer<R> {
         let mut remaining = header.payload_size;
         while remaining > 0 {
             let mut buf = [0u8; 256];
-            let len = buf.len().min(remaining);
+            let len = buf.len().min(remaining as usize);
             self.reader.read_exact(&mut buf[..len])?;
-            remaining -= len;
+            remaining -= len as u64;
         }
         Ok(header.element_type)
     }
@@ -145,7 +146,7 @@ impl<R: Read> Deserializer<R> {
 
     fn reader_with_limit(&mut self, header: Header) -> Result<impl Read + '_> {
         let limit =
-            u64::try_from(header.payload_size).map_err(usize_conversion)?;
+            u64::try_from(header.payload_size).map_err(u64_conversion)?;
         Ok((&mut self.reader).take(limit))
     }
 
@@ -156,7 +157,7 @@ impl<R: Read> Deserializer<R> {
         if header.payload_size <= 8 {
             // micro-optimization: read small payloads into a stack buffer
             let mut buf = [0u8; 8];
-            let smallbuf = &mut buf[..header.payload_size];
+            let smallbuf = &mut buf[..header.payload_size as usize];
             self.reader.read_exact(smallbuf)?;
             Ok(crate::json::parse_json_slice(smallbuf)?)
         } else {
@@ -284,7 +285,7 @@ fn read_with_quotes(r: impl Read) -> impl Read {
     b"\"".chain(r).chain(&b"\""[..])
 }
 
-fn usize_conversion(e: std::num::TryFromIntError) -> Error {
+fn u64_conversion(e: Infallible) -> Error {
     Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 

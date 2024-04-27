@@ -40,7 +40,7 @@ pub enum ElementType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Header {
     pub element_type: ElementType,
-    pub payload_size: usize,
+    pub payload_size: u64,
 }
 
 impl Header {

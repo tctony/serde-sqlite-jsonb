@@ -23,12 +23,12 @@ where
 /// Helper struct to write JSONB data, then finalize the header to its minimal size
 pub struct JsonbWriter<'a> {
     buffer: &'a mut Vec<u8>,
-    header_start: usize,
+    header_start: u64,
 }
 
 impl<'a> JsonbWriter<'a> {
     fn new(buffer: &'a mut Vec<u8>, element_type: ElementType) -> Self {
-        let header_start = buffer.len();
+        let header_start = buffer.len() as u64;
         buffer.extend_from_slice(&[u8::from(element_type); 9]);
         Self {
             buffer,
@@ -36,10 +36,11 @@ impl<'a> JsonbWriter<'a> {
         }
     }
     fn finalize(self) {
-        let data_start = self.header_start + 9;
+        let data_start = self.header_start as usize + 9;
         let data_end = self.buffer.len();
         let payload_size = data_end - data_start;
-        let header = &mut self.buffer[self.header_start..self.header_start + 9];
+        let header = &mut self.buffer
+            [(self.header_start as usize)..(self.header_start as usize) + 9];
         let head_len = if payload_size <= 11 {
             header[0] |= (payload_size as u8) << 4;
             1
@@ -63,10 +64,10 @@ impl<'a> JsonbWriter<'a> {
         if head_len < 9 {
             self.buffer.copy_within(
                 data_start..data_end,
-                self.header_start + head_len,
+                self.header_start as usize + head_len,
             );
             self.buffer
-                .truncate(self.header_start + head_len + payload_size);
+                .truncate(self.header_start as usize + head_len + payload_size);
         }
     }
 }
@@ -341,7 +342,7 @@ impl<'a> ser::SerializeTupleStruct for JsonbWriter<'a> {
 /// MyEnum::Variant { field1: 1, field2: 2 } -> {"Variant": {"field1": 1, "field2": 2}}
 /// We need to keep track of two jsonb headers, one for the inner array or map, and one for the object.
 pub struct EnumVariantSerializer<'a> {
-    map_header_start: usize,
+    map_header_start: u64,
     inner_jsonb_writer: JsonbWriter<'a>,
 }
 
@@ -480,8 +481,8 @@ mod tests {
         assert_eq!(to_vec(&"hello").unwrap(), b"\x5ahello");
     }
 
-    fn assert_long_str(repeats: usize, expected_header: &[u8]) {
-        let long_str = "x".repeat(repeats);
+    fn assert_long_str(repeats: u64, expected_header: &[u8]) {
+        let long_str = "x".repeat(repeats as usize);
         assert_eq!(
             to_vec(&long_str).unwrap(),
             [&expected_header[..], &long_str.as_bytes()].concat()
@@ -533,7 +534,7 @@ mod tests {
         #[derive(serde_derive::Serialize)]
         struct TestStruct {
             smol: char,
-            long_long_long_long: usize,
+            long_long_long_long: u64,
         }
         let test_struct = TestStruct {
             smol: 'X',
