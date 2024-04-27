@@ -1,3 +1,5 @@
+extern crate fifthtry_serde_sqlite_jsonb as serde_sqlite_jsonb;
+
 use std::collections::HashMap;
 
 use rusqlite::{Connection, DatabaseName};

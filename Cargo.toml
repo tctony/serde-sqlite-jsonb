@@ -1,9 +1,9 @@
 [package]
-name = "serde_sqlite_jsonb"
+name = "fifthtry-serde_sqlite_jsonb"
 version = "0.1.0"
 authors = ["Ophir Lojkine"]
 categories = ["encoding"]
-description = "A Serializer and Deserializer for SQLite jsonb binary format"
+description = "A Serializer and Deserializer for SQLite jsonb binary format (FifthTry fork, till PR is merged)"
 edition = "2021"
 keywords = ["serde"]
 license = "MIT OR Apache-2.0"
