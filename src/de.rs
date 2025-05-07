@@ -11,21 +11,25 @@ use crate::header::{ElementType, Header};
 use serde::de::{self, Deserialize, IntoDeserializer, SeqAccess, Visitor};
 use std::io::Read;
 
-/// A structure that deserializes SQLite JSONB data into Rust values.
+/// A structure that deserializes `SQLite` JSONB data into Rust values.
 pub struct Deserializer<R: Read> {
     /// The reader that the deserializer reads from.
     reader: R,
 }
 
 impl<'a> Deserializer<&'a [u8]> {
-    /// Deserialize an instance of type `T` from a byte slice of SQLite JSONB data.
-    #[allow(clippy::should_implement_trait)]
+    /// Deserialize an instance of type `T` from a byte slice of `SQLite` JSONB data.
+    #[must_use]
     pub fn from_bytes(input: &'a [u8]) -> Self {
         Deserializer { reader: input }
     }
 }
 
-/// Deserialize an instance of type `T` from a byte slice of SQLite JSONB data.
+/// Deserialize an instance of type `T` from a byte slice of `SQLite` JSONB data.
+///
+/// # Errors
+///
+/// Returns an error if the input data is invalid or if deserialization fails.
 pub fn from_slice<'a, T>(s: &'a [u8]) -> Result<T>
 where
     T: Deserialize<'a>,
@@ -39,7 +43,11 @@ where
     }
 }
 
-/// Deserialize an instance of type `T` from a byte slice of SQLite JSONB data.
+/// Deserialize an instance of type `T` from a byte slice of `SQLite` JSONB data.
+///
+/// # Errors
+///
+/// Returns an error if the input data is invalid or if deserialization fails.
 pub fn from_reader<'a, R: Read, T>(reader: R) -> Result<T>
 where
     T: Deserialize<'a>,
@@ -109,7 +117,10 @@ impl<R: Read> Deserializer<R> {
     }
 
     fn read_payload_string(&mut self, header: Header) -> Result<String> {
-        let mut str = String::with_capacity(header.payload_size as usize);
+        let mut str = String::with_capacity(
+            usize::try_from(header.payload_size)
+                .map_err(Error::IntConversion)?,
+        );
         let read = self.reader_with_limit(header)?.read_to_string(&mut str)?;
         assert_eq!(read, header.payload_size as usize);
         Ok(str)
@@ -193,8 +204,12 @@ impl<R: Read> Deserializer<R> {
         for<'a> T: Deserialize<'a>,
     {
         match header.element_type {
-            ElementType::Int => self.read_json_compatible(header),
-            ElementType::Int5 => self.read_json5_compatible(header),
+            ElementType::Int5 | ElementType::Float5 => {
+                self.read_json5_compatible(header)
+            }
+            ElementType::Float | ElementType::Int => {
+                self.read_json_compatible(header)
+            }
             t => Err(Error::UnexpectedType(t)),
         }
     }

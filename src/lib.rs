@@ -1,3 +1,5 @@
+#![warn(clippy::pedantic)]
+
 mod de;
 mod error;
 mod header;

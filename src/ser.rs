@@ -11,6 +11,10 @@ pub struct Serializer {
 }
 
 /// Serialize a value into a JSONB byte array
+///
+/// # Errors
+///
+/// Returns an error if serialization fails.
 pub fn to_vec<T>(value: &T) -> Result<Vec<u8>>
 where
     T: Serialize,
@@ -46,36 +50,38 @@ impl<'a> JsonbWriter<'a> {
             1
         } else if payload_size <= 0xff {
             header[0] |= 0xc0;
-            header[1] = payload_size as u8;
+            header[1] = u8::try_from(payload_size).unwrap();
             2
         } else if payload_size <= 0xffff {
             header[0] |= 0xd0;
-            header[1..3].copy_from_slice(&(payload_size as u16).to_be_bytes());
+            header[1..3].copy_from_slice(
+                &(u16::try_from(payload_size).unwrap()).to_be_bytes(),
+            );
             3
-        } else if payload_size <= 0xffffffff {
+        } else if payload_size <= 0xffff_ffff {
             header[0] |= 0xe0;
-            header[1..5].copy_from_slice(&(payload_size as u32).to_be_bytes());
+            header[1..5].copy_from_slice(
+                &(u32::try_from(payload_size).unwrap()).to_be_bytes(),
+            );
             5
         } else {
             header[0] |= 0xf0;
             header[1..9].copy_from_slice(&payload_size.to_be_bytes());
             9
         };
+        let header_start = usize::try_from(self.header_start)
+            .expect("header start out of range");
         if head_len < 9 {
-            self.buffer.copy_within(
-                data_start..data_end,
-                self.header_start as usize + head_len,
-            );
             self.buffer
-                .truncate(self.header_start as usize + head_len + payload_size);
+                .copy_within(data_start..data_end, header_start + head_len);
+            self.buffer.truncate(header_start + head_len + payload_size);
         }
     }
 }
 
 impl Serializer {
-    fn write_header_nodata(&mut self, element_type: ElementType) -> Result<()> {
+    fn write_header_nodata(&mut self, element_type: ElementType) {
         self.buffer.push(u8::from(element_type));
-        Ok(())
     }
 
     fn write_displayable(
@@ -114,7 +120,8 @@ impl<'a> ser::Serializer for &'a mut Serializer {
             ElementType::True
         } else {
             ElementType::False
-        })
+        });
+        Ok(())
     }
 
     fn serialize_i8(self, v: i8) -> Result<Self::Ok> {
@@ -186,7 +193,8 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     }
 
     fn serialize_unit(self) -> Result<Self::Ok> {
-        self.write_header_nodata(ElementType::Null)
+        self.write_header_nodata(ElementType::Null);
+        Ok(())
     }
 
     fn serialize_unit_struct(self, _name: &'static str) -> Result<Self::Ok> {
@@ -269,20 +277,19 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         self,
         _name: &'static str,
         _variant_index: u32,
-        _variant: &'static str,
+        variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStructVariant> {
         Ok(EnumVariantSerializer::new(
             &mut self.buffer,
-            _variant,
+            variant,
             ElementType::Object,
         ))
     }
 }
 
-impl<'a> ser::SerializeSeq for JsonbWriter<'a> {
+impl ser::SerializeSeq for JsonbWriter<'_> {
     type Ok = ();
-
     type Error = Error;
 
     fn serialize_element<T: ?Sized + Serialize>(
@@ -302,9 +309,8 @@ impl<'a> ser::SerializeSeq for JsonbWriter<'a> {
     }
 }
 
-impl<'a> ser::SerializeTuple for JsonbWriter<'a> {
+impl ser::SerializeTuple for JsonbWriter<'_> {
     type Ok = ();
-
     type Error = Error;
 
     fn serialize_element<T: ?Sized + Serialize>(
@@ -319,9 +325,8 @@ impl<'a> ser::SerializeTuple for JsonbWriter<'a> {
     }
 }
 
-impl<'a> ser::SerializeTupleStruct for JsonbWriter<'a> {
+impl ser::SerializeTupleStruct for JsonbWriter<'_> {
     type Ok = ();
-
     type Error = Error;
 
     fn serialize_field<T: ?Sized + Serialize>(
@@ -338,8 +343,8 @@ impl<'a> ser::SerializeTupleStruct for JsonbWriter<'a> {
 
 /// Serializes an enum variant as an object with a single key for the variant name
 /// and an array of the tuple fields or a map as the value.
-/// MyEnum::Variant(1, 2) -> {"Variant": [1, 2]}
-/// MyEnum::Variant { field1: 1, field2: 2 } -> {"Variant": {"field1": 1, "field2": 2}}
+/// `MyEnum::Variant(1, 2)` -> {"Variant": [1, 2]}
+/// `MyEnum::Variant` { field1: 1, field2: 2 } -> {"Variant": {"field1": 1, "field2": 2}}
 /// We need to keep track of two jsonb headers, one for the inner array or map, and one for the object.
 pub struct EnumVariantSerializer<'a> {
     map_header_start: u64,
@@ -365,9 +370,8 @@ impl<'a> EnumVariantSerializer<'a> {
     }
 }
 
-impl<'a> ser::SerializeTupleVariant for EnumVariantSerializer<'a> {
+impl ser::SerializeTupleVariant for EnumVariantSerializer<'_> {
     type Ok = ();
-
     type Error = Error;
 
     fn serialize_field<T: ?Sized + Serialize>(
@@ -392,9 +396,8 @@ impl<'a> ser::SerializeTupleVariant for EnumVariantSerializer<'a> {
     }
 }
 
-impl<'a> ser::SerializeMap for JsonbWriter<'a> {
+impl ser::SerializeMap for JsonbWriter<'_> {
     type Ok = ();
-
     type Error = Error;
 
     fn serialize_key<T: ?Sized + Serialize>(&mut self, key: &T) -> Result<()> {
@@ -414,9 +417,8 @@ impl<'a> ser::SerializeMap for JsonbWriter<'a> {
     }
 }
 
-impl<'a> ser::SerializeStruct for JsonbWriter<'a> {
+impl ser::SerializeStruct for JsonbWriter<'_> {
     type Ok = ();
-
     type Error = Error;
 
     fn serialize_field<T: ?Sized + Serialize>(
@@ -434,9 +436,8 @@ impl<'a> ser::SerializeStruct for JsonbWriter<'a> {
     }
 }
 
-impl<'a> ser::SerializeStructVariant for EnumVariantSerializer<'a> {
+impl ser::SerializeStructVariant for EnumVariantSerializer<'_> {
     type Ok = ();
-
     type Error = Error;
 
     fn serialize_field<T: ?Sized + Serialize>(
@@ -485,7 +486,7 @@ mod tests {
         let long_str = "x".repeat(repeats as usize);
         assert_eq!(
             to_vec(&long_str).unwrap(),
-            [&expected_header[..], &long_str.as_bytes()].concat()
+            [expected_header, long_str.as_bytes()].concat()
         );
     }
 

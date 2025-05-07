@@ -17,6 +17,7 @@ pub enum Error {
     TrailingCharacters,
     Utf8(std::string::FromUtf8Error),
     Empty,
+    IntConversion(std::num::TryFromIntError),
 }
 
 impl ser::Error for Error {
@@ -47,6 +48,7 @@ impl Display for Error {
             }
             Error::Utf8(_) => write!(f, "invalid utf8 in string"),
             Error::Empty => write!(f, "empty jsonb value"),
+            Error::IntConversion(e) => write!(f, "integer size conversion error: {e}"),
         }
     }
 }
