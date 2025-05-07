@@ -117,22 +117,22 @@ impl<R: Read> Deserializer<R> {
     }
 
     fn read_payload_string(&mut self, header: Header) -> Result<String> {
-        let mut str = String::with_capacity(
-            usize::try_from(header.payload_size)
-                .map_err(Error::IntConversion)?,
-        );
-        let read = self.reader_with_limit(header)?.read_to_string(&mut str)?;
-        assert_eq!(read, header.payload_size as usize);
+        let payload_size = usize::try_from(header.payload_size)
+            .map_err(Error::IntConversion)?;
+        let mut str = String::with_capacity(payload_size);
+        let read = self.reader_with_limit(header).read_to_string(&mut str)?;
+        assert_eq!(read, payload_size);
         Ok(str)
     }
 
     fn drop_payload(&mut self, header: Header) -> Result<ElementType> {
-        let mut remaining = header.payload_size;
+        let mut remaining = usize::try_from(header.payload_size)
+            .map_err(Error::IntConversion)?;
         while remaining > 0 {
             let mut buf = [0u8; 256];
-            let len = buf.len().min(remaining as usize);
+            let len = buf.len().min(remaining);
             self.reader.read_exact(&mut buf[..len])?;
-            remaining -= len as u64;
+            remaining -= len;
         }
         Ok(header.element_type)
     }
@@ -154,9 +154,9 @@ impl<R: Read> Deserializer<R> {
         }
     }
 
-    fn reader_with_limit(&mut self, header: Header) -> Result<impl Read + '_> {
+    fn reader_with_limit(&mut self, header: Header) -> impl Read + '_ {
         let limit = header.payload_size;
-        Ok((&mut self.reader).take(limit))
+        (&mut self.reader).take(limit)
     }
 
     fn read_json_compatible<T>(&mut self, header: Header) -> Result<T>
@@ -166,11 +166,13 @@ impl<R: Read> Deserializer<R> {
         if header.payload_size <= 8 {
             // micro-optimization: read small payloads into a stack buffer
             let mut buf = [0u8; 8];
-            let smallbuf = &mut buf[..header.payload_size as usize];
+            let payload_size = usize::try_from(header.payload_size)
+                .map_err(Error::IntConversion)?;
+            let smallbuf = &mut buf[..payload_size];
             self.reader.read_exact(smallbuf)?;
             Ok(crate::json::parse_json_slice(smallbuf)?)
         } else {
-            let mut reader = self.reader_with_limit(header)?;
+            let mut reader = self.reader_with_limit(header);
             Ok(crate::json::parse_json(&mut reader)?)
         }
     }
@@ -179,7 +181,7 @@ impl<R: Read> Deserializer<R> {
     where
         for<'a> T: Deserialize<'a>,
     {
-        let mut reader = self.reader_with_limit(header)?;
+        let mut reader = self.reader_with_limit(header);
         Ok(crate::json::parse_json5(&mut reader)?)
     }
 
@@ -187,7 +189,7 @@ impl<R: Read> Deserializer<R> {
         &mut self,
         header: Header,
     ) -> Result<String> {
-        let mut reader = read_with_quotes(self.reader_with_limit(header)?);
+        let mut reader = read_with_quotes(self.reader_with_limit(header));
         Ok(crate::json::parse_json(&mut reader)?)
     }
 
@@ -195,7 +197,7 @@ impl<R: Read> Deserializer<R> {
         &mut self,
         header: Header,
     ) -> Result<String> {
-        let mut reader = read_with_quotes(self.reader_with_limit(header)?);
+        let mut reader = read_with_quotes(self.reader_with_limit(header));
         Ok(crate::json::parse_json5(&mut reader)?)
     }
 
@@ -230,8 +232,12 @@ impl<R: Read> Deserializer<R> {
         for<'a> T: Deserialize<'a>,
     {
         match header.element_type {
-            ElementType::Int | ElementType::Float => self.read_json_compatible(header),
-            ElementType::Int5 | ElementType::Float5 => self.read_json5_compatible(header),
+            ElementType::Int | ElementType::Float => {
+                self.read_json_compatible(header)
+            }
+            ElementType::Int5 | ElementType::Float5 => {
+                self.read_json5_compatible(header)
+            }
             t => Err(Error::UnexpectedType(t)),
         }
     }
@@ -428,7 +434,7 @@ impl<'de, R: Read> de::Deserializer<'de> for &mut Deserializer<R> {
         V: Visitor<'de>,
     {
         let head = self.read_header()?;
-        let reader = self.reader_with_limit(head)?;
+        let reader = self.reader_with_limit(head);
         let mut seq_deser = Deserializer { reader };
         visitor.visit_seq(&mut seq_deser)
     }
@@ -457,7 +463,7 @@ impl<'de, R: Read> de::Deserializer<'de> for &mut Deserializer<R> {
         V: Visitor<'de>,
     {
         let head = self.read_header()?;
-        let reader = self.reader_with_limit(head)?;
+        let reader = self.reader_with_limit(head);
         let mut seq_deser = Deserializer { reader };
         visitor.visit_map(&mut seq_deser)
     }
@@ -493,7 +499,7 @@ impl<'de, R: Read> de::Deserializer<'de> for &mut Deserializer<R> {
                 visitor.visit_enum(s.into_deserializer())
             }
             ElementType::Object => {
-                let reader = self.reader_with_limit(header)?;
+                let reader = self.reader_with_limit(header);
                 let mut de = Deserializer { reader };
                 let r = visitor.visit_enum(&mut de);
                 if de.reader.read(&mut [0])? == 0 {
