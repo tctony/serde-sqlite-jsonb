@@ -1,9 +1,9 @@
 [package]
-name = "fifthtry-serde_sqlite_jsonb"
+name = "serde_sqlite_jsonb"
 version = "0.1.0"
 authors = ["Ophir Lojkine"]
 categories = ["encoding"]
-description = "A Serializer and Deserializer for SQLite jsonb binary format (FifthTry fork, till PR is merged)"
+description = "A Serializer and Deserializer for SQLite jsonb binary format"
 edition = "2021"
 keywords = ["serde"]
 license = "MIT OR Apache-2.0"
@@ -22,7 +22,7 @@ default = ["serde_json"]
 
 [dev-dependencies]
 serde_derive = "1.0"
-rusqlite = { version = "0.31", features = ["bundled", "blob"] }
+rusqlite = { version = "0.32", features = ["bundled", "blob"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [profile.bench]
