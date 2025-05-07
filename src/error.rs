@@ -34,7 +34,7 @@ impl de::Error for Error {
 impl Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Error::Message(m) => write!(f, "{}", m),
+            Error::Message(m) => write!(f, "{m}"),
             Error::JsonError(_) => write!(f, "json error"),
             Error::Json5Error(_) => write!(f, "json5 error"),
             Error::InvalidElementType(t) => {

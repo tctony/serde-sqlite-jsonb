@@ -84,7 +84,7 @@ impl Serializer {
         data: impl std::fmt::Display,
     ) -> Result<()> {
         let mut w = JsonbWriter::new(&mut self.buffer, element_type);
-        write!(&mut w.buffer, "{}", data)?;
+        write!(&mut w.buffer, "{data}")?;
         w.finalize();
         Ok(())
     }
