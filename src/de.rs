@@ -230,10 +230,8 @@ impl<R: Read> Deserializer<R> {
         for<'a> T: Deserialize<'a>,
     {
         match header.element_type {
-            ElementType::Int => self.read_json_compatible(header),
-            ElementType::Int5 => self.read_json5_compatible(header),
-            ElementType::Float => self.read_json_compatible(header),
-            ElementType::Float5 => self.read_json5_compatible(header),
+            ElementType::Int | ElementType::Float => self.read_json_compatible(header),
+            ElementType::Int5 | ElementType::Float5 => self.read_json5_compatible(header),
             t => Err(Error::UnexpectedType(t)),
         }
     }

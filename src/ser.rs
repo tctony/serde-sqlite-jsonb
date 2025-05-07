@@ -40,13 +40,14 @@ impl<'a> JsonbWriter<'a> {
         }
     }
     fn finalize(self) {
-        let data_start = self.header_start as usize + 9;
+        let header_start = usize::try_from(self.header_start)
+            .expect("header start out of range");
+        let data_start = header_start + 9;
         let data_end = self.buffer.len();
         let payload_size = data_end - data_start;
-        let header = &mut self.buffer
-            [(self.header_start as usize)..(self.header_start as usize) + 9];
+        let header = &mut self.buffer[header_start..header_start + 9];
         let head_len = if payload_size <= 11 {
-            header[0] |= (payload_size as u8) << 4;
+            header[0] |= (u8::try_from(payload_size).unwrap()) << 4;
             1
         } else if payload_size <= 0xff {
             header[0] |= 0xc0;
@@ -69,8 +70,6 @@ impl<'a> JsonbWriter<'a> {
             header[1..9].copy_from_slice(&payload_size.to_be_bytes());
             9
         };
-        let header_start = usize::try_from(self.header_start)
-            .expect("header start out of range");
         if head_len < 9 {
             self.buffer
                 .copy_within(data_start..data_end, header_start + head_len);
