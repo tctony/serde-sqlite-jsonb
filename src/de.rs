@@ -282,7 +282,13 @@ impl<R: Read> Deserializer<R> {
                 }
             }
             ElementType::Array => visitor.visit_seq(self),
-            ElementType::Object => visitor.visit_map(self),
+            ElementType::Object => {
+                let limit = header.payload_size;
+                // Avoids infinite type inference recursion by using dynamic dispatch
+                let reader = (&mut self.reader as &mut dyn Read).take(limit);
+                let mut de = Deserializer { reader };
+                visitor.visit_map(&mut de)
+            }
             ElementType::Text
             | ElementType::TextJ
             | ElementType::Text5
@@ -940,6 +946,70 @@ mod tests {
         // {"X": "Y"}
         let actual: Test = from_slice(b"\x4c\x18X\x18Y").unwrap();
         let expected = Test::X("Y".to_string());
+        assert_eq!(actual, expected);
+    }
+
+    #[derive(Debug, PartialEq, serde_derive::Deserialize)]
+    #[serde(tag = "t")]
+    enum InternallyTaggedUnitEnum {
+        A,
+        B,
+    }
+
+    #[test]
+    fn test_single_internally_tagged_enum() {
+        // {"t": "A"}
+        // Byte breakdown:
+        // 0x4c - Header byte: size=4 (upper 4 bits), type=Object (0xC in lower 4 bits) - First object starts
+        // 0x17 - Header byte: size=1 (upper 4 bits), type=Text (0x7 in lower 4 bits) - Key string
+        // 0x74 - ASCII 't' - The key name
+        // 0x17 - Header byte: size=1 (upper 4 bits), type=Text (0x7 in lower 4 bits) - Value string
+        // 0x41 - ASCII 'A' - The variant name
+        let actual: InternallyTaggedUnitEnum =
+            from_slice(b"\x4c\x17t\x17A").unwrap();
+        let expected = InternallyTaggedUnitEnum::A;
+        assert_eq!(actual, expected, "{:x?} != {:x?}", actual, expected);
+        let actual: InternallyTaggedUnitEnum =
+            from_slice(b"\x4c\x17t\x17B").unwrap();
+        let expected = InternallyTaggedUnitEnum::B;
+        assert_eq!(actual, expected, "{:x?} != {:x?}", actual, expected);
+    }
+
+    #[test]
+    fn test_array_of_internally_tagged_enums() {
+        // [{"t": "A"}, {"t": "B"}]
+        // Byte breakdown:
+        // 0xab - Header byte: size=10 (upper 4 bits), type=Array (0xB in lower 4 bits)
+        // 0x4c - Header byte: size=4 (upper 4 bits), type=Object (0xC in lower 4 bits) - First object starts
+        // 0x17 - Header byte: size=1 (upper 4 bits), type=Text (0x7 in lower 4 bits) - Key string
+        // 0x74 - ASCII 't' - The key name
+        // 0x17 - Header byte: size=1 (upper 4 bits), type=Text (0x7 in lower 4 bits) - Value string
+        // 0x41 - ASCII 'A' - The variant name
+        // 0x4c - Header byte: size=4 (upper 4 bits), type=Object (0xC in lower 4 bits) - Second object starts
+        // 0x17 - Header byte: size=1 (upper 4 bits), type=Text (0x7 in lower 4 bits) - Key string
+        // 0x74 - ASCII 't' - The key name
+        // 0x17 - Header byte: size=1 (upper 4 bits), type=Text (0x7 in lower 4 bits) - Value string
+        // 0x42 - ASCII 'B' - The variant name
+        let actual: Vec<InternallyTaggedUnitEnum> =
+            from_slice(b"\xab\x4c\x17\x74\x17\x41\x4c\x17\x74\x17\x42")
+                .unwrap();
+        let expected =
+            vec![InternallyTaggedUnitEnum::A, InternallyTaggedUnitEnum::B];
+        assert_eq!(actual, expected, "{:x?} != {:x?}", actual, expected);
+    }
+
+    #[cfg(feature = "serde_json")]
+    #[test]
+    fn test_array_of_maps_parsed_as_any() {
+        use serde_json::{Map, Value};
+        // An array containing two empty hashmaps: [{}, {}]
+        // Byte breakdown:
+        // 0x2b - Header byte: size=2 (upper 4 bits), type=Array (0xB in lower 4 bits)
+        // 0x0c - Header byte: size=0 (upper 4 bits), type=Object (0xC in lower 4 bits) - First object starts
+        // 0x0c - Header byte: size=0 (upper 4 bits), type=Object (0xC in lower 4 bits) - Second object starts
+        let encoded = b"\x2b\x0c\x0c";
+        let actual: serde_json::Value = from_slice(encoded).unwrap();
+        let expected = Value::Array(vec![Map::new().into(), Map::new().into()]);
         assert_eq!(actual, expected);
     }
 
