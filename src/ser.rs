@@ -7,13 +7,22 @@ use std::io::Write;
 
 #[derive(Debug, Default, Clone)]
 pub struct Options {
-    binary_float: bool,
+    pub binary_float: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Serializer {
     buffer: Vec<u8>,
     options: Options,
+}
+
+impl Serializer {
+    pub fn from_options(options: Options) -> Self {
+        Self {
+            buffer: Vec::new(),
+            options,
+        }
+    }
 }
 
 /// Serialize a value into a JSONB byte array
@@ -25,7 +34,7 @@ pub fn to_vec<T>(value: &T) -> Result<Vec<u8>>
 where
     T: Serialize,
 {
-    let mut serializer = Serializer::default();
+    let mut serializer = Serializer::from_options(Default::default());
     value.serialize(&mut serializer)?;
     Ok(serializer.buffer)
 }
@@ -34,10 +43,7 @@ pub fn to_vec_with_options<T>(value: &T, options: Options) -> Result<Vec<u8>>
 where
     T: Serialize,
 {
-    let mut serializer = Serializer {
-        buffer: Vec::new(),
-        options,
-    };
+    let mut serializer = Serializer::from_options(options);
     value.serialize(&mut serializer).unwrap();
     Ok(serializer.buffer)
 }
@@ -46,15 +52,21 @@ where
 pub struct JsonbWriter<'a> {
     buffer: &'a mut Vec<u8>,
     header_start: u64,
+    options: Options,
 }
 
 impl<'a> JsonbWriter<'a> {
-    fn new(buffer: &'a mut Vec<u8>, element_type: ElementType) -> Self {
+    fn new(
+        buffer: &'a mut Vec<u8>,
+        element_type: ElementType,
+        options: Options,
+    ) -> Self {
         let header_start = buffer.len() as u64;
         buffer.extend_from_slice(&[u8::from(element_type); 9]);
         Self {
             buffer,
             header_start,
+            options,
         }
     }
     fn finalize(self) {
@@ -106,7 +118,11 @@ impl Serializer {
         element_type: ElementType,
         data: impl std::fmt::Display,
     ) -> Result<()> {
-        let mut w = JsonbWriter::new(&mut self.buffer, element_type);
+        let mut w = JsonbWriter::new(
+            &mut self.buffer,
+            element_type,
+            self.options.clone(),
+        );
         write!(&mut w.buffer, "{data}")?;
         w.finalize();
         Ok(())
@@ -117,7 +133,11 @@ impl Serializer {
         element_type: ElementType,
         data: impl AsRef<[u8]>,
     ) -> Result<()> {
-        let w = JsonbWriter::new(&mut self.buffer, element_type);
+        let w = JsonbWriter::new(
+            &mut self.buffer,
+            element_type,
+            self.options.clone(),
+        );
         w.buffer.write_all(data.as_ref())?;
         w.finalize();
         Ok(())
@@ -268,11 +288,19 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     }
 
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq> {
-        Ok(JsonbWriter::new(&mut self.buffer, ElementType::Array))
+        Ok(JsonbWriter::new(
+            &mut self.buffer,
+            ElementType::Array,
+            self.options.clone(),
+        ))
     }
 
     fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple> {
-        Ok(JsonbWriter::new(&mut self.buffer, ElementType::Array))
+        Ok(JsonbWriter::new(
+            &mut self.buffer,
+            ElementType::Array,
+            self.options.clone(),
+        ))
     }
 
     fn serialize_tuple_struct(
@@ -294,11 +322,16 @@ impl<'a> ser::Serializer for &'a mut Serializer {
             &mut self.buffer,
             variant,
             ElementType::Array,
+            self.options.clone(),
         ))
     }
 
     fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap> {
-        Ok(JsonbWriter::new(&mut self.buffer, ElementType::Object))
+        Ok(JsonbWriter::new(
+            &mut self.buffer,
+            ElementType::Object,
+            self.options.clone(),
+        ))
     }
 
     fn serialize_struct(
@@ -320,6 +353,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
             &mut self.buffer,
             variant,
             ElementType::Object,
+            self.options.clone(),
         ))
     }
 }
@@ -332,7 +366,7 @@ impl ser::SerializeSeq for JsonbWriter<'_> {
         &mut self,
         value: &T,
     ) -> Result<()> {
-        let mut serializer = Serializer::default();
+        let mut serializer = Serializer::from_options(self.options.clone());
         std::mem::swap(self.buffer, &mut serializer.buffer);
         let r = value.serialize(&mut serializer);
         std::mem::swap(self.buffer, &mut serializer.buffer);
@@ -385,6 +419,7 @@ impl ser::SerializeTupleStruct for JsonbWriter<'_> {
 pub struct EnumVariantSerializer<'a> {
     map_header_start: u64,
     inner_jsonb_writer: JsonbWriter<'a>,
+    options: Options,
 }
 
 impl<'a> EnumVariantSerializer<'a> {
@@ -392,16 +427,19 @@ impl<'a> EnumVariantSerializer<'a> {
         buffer: &'a mut Vec<u8>,
         variant: &'static str,
         inner_element_type: ElementType,
+        options: Options,
     ) -> Self {
         let mut map_jsonb_writer =
-            JsonbWriter::new(buffer, ElementType::Object);
+            JsonbWriter::new(buffer, ElementType::Object, options.clone());
         ser::SerializeMap::serialize_key(&mut map_jsonb_writer, variant)
             .unwrap();
         let map_header_start = map_jsonb_writer.header_start;
-        let inner_jsonb_writer = JsonbWriter::new(buffer, inner_element_type);
+        let inner_jsonb_writer =
+            JsonbWriter::new(buffer, inner_element_type, options.clone());
         Self {
             map_header_start,
             inner_jsonb_writer,
+            options,
         }
     }
 }
@@ -424,10 +462,12 @@ impl ser::SerializeTupleVariant for EnumVariantSerializer<'_> {
         ser::SerializeSeq::end(JsonbWriter {
             buffer: self.inner_jsonb_writer.buffer,
             header_start: self.inner_jsonb_writer.header_start,
+            options: self.options.clone(),
         })?;
         ser::SerializeMap::end(JsonbWriter {
             buffer: self.inner_jsonb_writer.buffer,
             header_start: self.map_header_start,
+            options: self.options.clone(),
         })
     }
 }
@@ -670,5 +710,13 @@ mod tests {
             b"\x8f\x00\x00\x00\x00\x00\x00\x04\xc0",
             "-2.5f64 in little-endian IEEE 754"
         );
+
+        // let blob = to_vec_with_options(
+        //     &serde_json::json!({
+        //         "num": -2.5f64,
+        //     }),
+        //     options.clone(),
+        // );
+        // println!("{:?}", blob);
     }
 }

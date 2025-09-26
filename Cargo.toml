@@ -24,10 +24,15 @@ default = ["serde_json"]
 serde_derive = "1.0"
 rusqlite = { version = "0.35", features = ["bundled", "blob"] }
 criterion = { version = "0.6", features = ["html_reports"] }
+rand = "0.9.2"
 
 [profile.bench]
 debug = 1
 
 [[bench]]
 name = "vs_json"
+harness = false
+
+[[bench]]
+name = "binary_float"
 harness = false
