@@ -238,6 +238,34 @@ impl<R: Read> Deserializer<R> {
             ElementType::Int5 | ElementType::Float5 => {
                 self.read_json5_compatible(header)
             }
+            ElementType::BinaryFloat => {
+                // read ieee 754 little endian binary float
+                let payload_size = usize::try_from(header.payload_size)
+                    .map_err(Error::IntConversion)?;
+                match payload_size {
+                    4 => {
+                        let mut buf = [0u8; 4];
+                        self.reader.read_exact(&mut buf)?;
+                        let f = f32::from_le_bytes(buf);
+                        let deserializer: serde::de::value::F32Deserializer<
+                            Error,
+                        > = f.into_deserializer();
+                        Ok(T::deserialize(deserializer)?)
+                    }
+                    8 => {
+                        let mut buf = [0u8; 8];
+                        self.reader.read_exact(&mut buf)?;
+                        let f = f64::from_le_bytes(buf);
+                        let deserializer: serde::de::value::F64Deserializer<
+                            Error,
+                        > = f.into_deserializer();
+                        Ok(T::deserialize(deserializer)?)
+                    }
+                    n => Err(Error::Message(format!(
+                        "invalid payload size {n} for binary float"
+                    ))),
+                }
+            }
             t => Err(Error::UnexpectedType(t)),
         }
     }
@@ -258,7 +286,9 @@ impl<R: Read> Deserializer<R> {
             ElementType::True | ElementType::False => {
                 visitor.visit_bool(self.read_bool(header)?)
             }
-            ElementType::Float | ElementType::Float5 => {
+            ElementType::Float
+            | ElementType::Float5
+            | ElementType::BinaryFloat => {
                 visitor.visit_f64(self.read_float(header)?)
             }
             ElementType::Int | ElementType::Int5 => {
@@ -295,9 +325,7 @@ impl<R: Read> Deserializer<R> {
             | ElementType::TextRaw => {
                 visitor.visit_string(self.read_string(header)?)
             }
-            ElementType::Reserved13
-            | ElementType::Reserved14
-            | ElementType::Reserved15 => {
+            ElementType::Reserved13 | ElementType::Reserved14 => {
                 Err(Error::UnexpectedType(header.element_type))
             }
         }
@@ -1025,6 +1053,19 @@ mod tests {
                 .unwrap_err()
                 .to_string(),
             Error::TrailingCharacters.to_string()
+        );
+    }
+
+    #[test]
+    fn test_binary_float() {
+        assert_eq!(
+            from_slice::<f32>(b"\x4f\x00\x00\x80\x3f").unwrap(),
+            // from_slice::<f32>(b"\xcf\x04\x00\x00\x80\x3f").unwrap(),
+            1.0
+        );
+        assert_eq!(
+            from_slice::<f64>(b"\x8f\x00\x00\x00\x00\x00\x00\xf0\x3f").unwrap(),
+            1.0
         );
     }
 }

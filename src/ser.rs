@@ -5,9 +5,15 @@ use crate::{
 use serde::ser::{self, Serialize};
 use std::io::Write;
 
+#[derive(Debug, Default, Clone)]
+pub struct Options {
+    binary_float: bool,
+}
+
 #[derive(Debug, Default)]
 pub struct Serializer {
     buffer: Vec<u8>,
+    options: Options,
 }
 
 /// Serialize a value into a JSONB byte array
@@ -21,6 +27,18 @@ where
 {
     let mut serializer = Serializer::default();
     value.serialize(&mut serializer)?;
+    Ok(serializer.buffer)
+}
+
+pub fn to_vec_with_options<T>(value: &T, options: Options) -> Result<Vec<u8>>
+where
+    T: Serialize,
+{
+    let mut serializer = Serializer {
+        buffer: Vec::new(),
+        options,
+    };
+    value.serialize(&mut serializer).unwrap();
     Ok(serializer.buffer)
 }
 
@@ -93,6 +111,17 @@ impl Serializer {
         w.finalize();
         Ok(())
     }
+
+    fn write_binary(
+        &mut self,
+        element_type: ElementType,
+        data: impl AsRef<[u8]>,
+    ) -> Result<()> {
+        let w = JsonbWriter::new(&mut self.buffer, element_type);
+        w.buffer.write_all(data.as_ref())?;
+        w.finalize();
+        Ok(())
+    }
 }
 
 impl<'a> ser::Serializer for &'a mut Serializer {
@@ -156,11 +185,19 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     }
 
     fn serialize_f32(self, v: f32) -> Result<Self::Ok> {
-        self.write_displayable(ElementType::Float, v)
+        if !self.options.binary_float {
+            self.write_displayable(ElementType::Float, v)
+        } else {
+            self.write_binary(ElementType::BinaryFloat, v.to_le_bytes())
+        }
     }
 
     fn serialize_f64(self, v: f64) -> Result<Self::Ok> {
-        self.write_displayable(ElementType::Float, v)
+        if !self.options.binary_float {
+            self.write_displayable(ElementType::Float, v)
+        } else {
+            self.write_binary(ElementType::BinaryFloat, v.to_le_bytes())
+        }
     }
 
     fn serialize_char(self, v: char) -> Result<Self::Ok> {
@@ -618,5 +655,20 @@ mod tests {
         }
         let test_struct = E::S { x: true };
         assert_eq!(to_vec(&test_struct).unwrap(), b"\x6c\x1aS\x3c\x1ax\x01");
+    }
+
+    #[test]
+    fn test_serialize_binary_float() {
+        let options = Options { binary_float: true };
+        assert_eq!(
+            to_vec_with_options(&1.0f32, options.clone()).unwrap(),
+            b"\x4f\x00\x00\x80\x3f",
+            "1.0f32 in little-endian IEEE 754"
+        );
+        assert_eq!(
+            to_vec_with_options(&-2.5f64, options.clone()).unwrap(),
+            b"\x8f\x00\x00\x00\x00\x00\x00\x04\xc0",
+            "-2.5f64 in little-endian IEEE 754"
+        );
     }
 }

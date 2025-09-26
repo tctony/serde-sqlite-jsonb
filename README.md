@@ -1,3 +1,15 @@
+# BinaryFloat Feature
+
+sqlite jsonb stores float number as ascii text which takes lots more storage space
+that a binary float which is 4 or 8 bytes.
+
+This repo implement a option that can serialize float number in binary format can
+be used like:
+```
+to_vec_with_options(some_vector_of_floats, Options { binary_float: true })?
+```
+which save almost 2/3 of storage spaces.
+
 # serde-sqlite-jsonb
 
 This crate provides a custom Serde deserializer for SQLite JSONB columns.

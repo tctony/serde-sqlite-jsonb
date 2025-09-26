@@ -32,8 +32,8 @@ pub enum ElementType {
     Reserved13 = 0xD,
     /// Reserved for future expansion.
     Reserved14 = 0xE,
-    /// Reserved for future expansion.
-    Reserved15 = 0xF,
+    /// Binary Float of IEEE 754 in little-endian
+    BinaryFloat = 0xF,
 }
 
 /// Represents the header of a JSONB element (size and type).
@@ -73,7 +73,7 @@ impl std::convert::From<u8> for ElementType {
             0xC => ElementType::Object,
             0xD => ElementType::Reserved13,
             0xE => ElementType::Reserved14,
-            0xF => ElementType::Reserved15,
+            0xF => ElementType::BinaryFloat,
             _ => unreachable!("A four-bit number cannot be larger than 15"),
         }
     }
