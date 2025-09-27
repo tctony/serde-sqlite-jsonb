@@ -8,7 +8,9 @@ be used like:
 ```
 to_vec_with_options(some_vector_of_floats, Options { binary_float: true })?
 ```
-which save almost 2/3 of storage spaces.
+by which would save almost 2/3 of storage spaces.
+
+See `examples/binary_float_compare.rs` for more.
 
 # serde-sqlite-jsonb
 
